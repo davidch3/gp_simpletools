@@ -149,7 +149,7 @@ sub get_tablelist{
     (select reloid,relname,age_int,row_number() over(partition by reloid,relname order by age_int desc) rn from tmp_class_age) a
     inner join pg_class b on a.reloid=b.oid and a.rn=1
     inner join pg_namespace c on b.relnamespace=c.oid
-    order by age_int desc limit 1000
+    order by age_int desc limit 3000
   };
   print $fh_log "[INFO]psql -A -X -t -c [".$sql."]\n";
   @tmp_tablelist=`psql -A -X -t -c "$sql"` ;
@@ -186,7 +186,7 @@ sub get_tablelist{
     (select reloid,relname,age_int,row_number() over(partition by reloid,relname order by age_int desc) rn from tmp_class_age) a
     inner join pg_class b on a.reloid=b.oid and a.rn=1
     inner join pg_namespace c on b.relnamespace=c.oid
-    order by age_int desc limit 2000
+    order by age_int desc limit 3000
   };
   print $fh_log "[INFO]psql -A -X -t -c [".$sql."]\n";
   @tmp_tablelist=`psql -A -X -t -c "$sql"` ;
@@ -235,7 +235,7 @@ sub get_tablelist{
     (select reloid,relname,age_int,row_number() over(partition by reloid,relname order by age_int desc) rn from tmp_class_age) a
     inner join pg_class b on a.reloid=b.oid and a.rn=1
     inner join pg_namespace c on b.relnamespace=c.oid
-    order by age_int desc limit 2000
+    order by age_int desc limit 3000
   };
   print $fh_log "[INFO]psql -A -X -t -c [".$sql."]\n";
   @tmp_tablelist=`psql -A -X -t -c "$sql"` ;
