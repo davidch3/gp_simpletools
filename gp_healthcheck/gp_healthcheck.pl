@@ -494,6 +494,26 @@ sub chk_catalog {
   info_notimestr("pg_attribute size in gpseg0:  $pg_attribute_gpseg0\n");
   info_notimestr("pg_attribute count:           $pg_attribute_count\n");
   info_notimestr("\n");
+  
+  $sql = qq{select a.nspname schemaname,
+            case when b.relstorage='a' then 'AO row' when b.relstorage='c' 
+            then 'AO column' when b.relstorage='h' 
+            then 'Heap' when b.relstorage='x' 
+            then 'External' else 'Others' end tabletype,
+            count(*) 
+            from pg_namespace a,pg_class b 
+            where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+            group by 1,2 order by 1,2;
+           };
+  my $tabletype=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Table type count error! \n");
+    return(-1);
+  }
+  info("---Table type info\n");
+  info_notimestr("$tabletype\n");  
+  
 }
 
 
@@ -523,6 +543,39 @@ sub chk_age {
   info_notimestr("$seg_age\n");
   
 }
+
+
+sub chk_activity {
+  my ($sql,$ret);
+  
+  print "---Check pg_stat_activity\n";
+  $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
+             from pg_stat_activity where current_query='<IDLE> in transaction' and 
+             (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+           };
+  my $idle_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query IDLE in transaction error! \n");
+    return(-1);
+  }
+  info("---Check IDLE in transaction over one day\n");
+  info_notimestr("$idle_info\n");
+  
+  $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
+             from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day'
+           };
+  my $query_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query IDLE in transaction error! \n");
+    return(-1);
+  }
+  info("---Check SQL running over one day\n");
+  info_notimestr("$query_info\n");
+  
+}
+
 
 
 sub skewcheck {
@@ -1007,6 +1060,7 @@ sub main{
   db_size();
   chk_catalog();
   chk_age();
+  chk_activity();
   
   if ( !$GLOBAL_ONLY ) {
     skewcheck();
