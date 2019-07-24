@@ -11,7 +11,7 @@ declare
   v_table text;
   v_sql text;
 BEGIN
-  
+  set statement_timeout='8h';
   for i_oid,v_schema,v_table in
   SELECT rel.oid,nsp.nspname,rel.relname FROM pg_class rel,pg_namespace nsp
   where rel.relnamespace=nsp.oid and rel.relkind='r' and rel.relstorage in ('a','c')
@@ -56,6 +56,7 @@ declare
   v_sql text;
   v_sql2 text;
 BEGIN
+  set statement_timeout='8h';
   v_sql2 := '
   SELECT rel.oid,nsp.nspname,rel.relname FROM pg_class rel,pg_namespace nsp
   where rel.relnamespace=nsp.oid and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
@@ -105,17 +106,18 @@ declare
   v_schemastr text;
   i int;
 BEGIN
-	schema_array := string_to_array(in_schemaname,',');
-	v_schemastr := '(';
-	i := 1;
-	for i in array_lower(schema_array,1) .. array_upper(schema_array,1) loop
-	  --raise info '%',schema_array[i];
-	  if i<array_upper(schema_array,1) then 
-	    v_schemastr := v_schemastr || '''' || schema_array[i] || ''',';
-	  else
-	    v_schemastr := v_schemastr || '''' || schema_array[i] || ''')';
-	  end if;
-	  i := i+1;
+  set statement_timeout='8h';
+  schema_array := string_to_array(in_schemaname,',');
+  v_schemastr := '(';
+  i := 1;
+  for i in array_lower(schema_array,1) .. array_upper(schema_array,1) loop
+    --raise info '%',schema_array[i];
+    if i<array_upper(schema_array,1) then 
+      v_schemastr := v_schemastr || '''' || schema_array[i] || ''',';
+    else
+      v_schemastr := v_schemastr || '''' || schema_array[i] || ''')';
+    end if;
+    i := i+1;
   end loop;
   raise info '%',v_schemastr;
   
