@@ -18,9 +18,7 @@ BEGIN
   v_sql := 'drop table if exists ao_aovisimap_hidden;
             create temp table ao_aovisimap_hidden as
              select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).seg aosegno,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).hidden,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).total
+             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
              FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
              where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
   execute v_sql;
@@ -68,9 +66,7 @@ BEGIN
   v_sql := 'drop table if exists ao_aovisimap_hidden;
             create temp table ao_aovisimap_hidden as
              select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).seg aosegno,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).hidden,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).total
+             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
              FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
              where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
              and nsp.nspname in '||in_schemaname;
@@ -135,9 +131,7 @@ BEGIN
   v_sql := 'drop table if exists ao_aovisimap_hidden;
             create temp table ao_aovisimap_hidden as
              select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).seg aosegno,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).hidden,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).total
+             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
              FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
              where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
              and nsp.nspname in '||v_schemastr;
@@ -186,9 +180,7 @@ BEGIN
   v_sql := 'drop table if exists ao_aovisimap_hidden;
             create temp table ao_aovisimap_hidden as
              select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).seg aosegno,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).hidden,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).total
+             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
              FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
              where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
   execute v_sql;
