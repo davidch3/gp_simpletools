@@ -110,6 +110,10 @@ sub getOption{
     print "Input error: The following options should be specified one: all, include-schema, include-schema-file\n";
     exit 0;
   }
+  if ( $concurrency=="" || $concurrency<=0 ) {
+    print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2\n";
+    exit 0;
+  }
 
   #print $hostname."\n".$port."\n".$database."\n".$username."\n".$password."\n".$IS_HELP."\n".$IS_ALL."\n".$#CHK_SCHEMA."\n".$SCHEMA_FILE."\n".$concurrency."\n".$LOG_DIR."\n";
   
