@@ -1,0 +1,15 @@
+Installation: psql dbname -af skewcheck_func.sql
+
+Usage: Check table skew in each schema. example: select * from skewcheck_func('public');
+
+Output column:
+tablename: Skew table name.
+sys_segcount: Total segment instances in GP cluster.
+data_segcount: The number of segment instances have data in this table.
+maxsize_segid: The max size segmentID in this table.
+maxsize: Size of segmentID above.
+skew: skew rate, (max - avg)/avg. 
+dk: Distribution key of table, if null is randomly.
+
+Even if skew=0, but data_segcount<sys_segcount, This table is skew.
+
