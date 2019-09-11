@@ -1,4 +1,17 @@
-Check bloat table (include: heap / ao tables), vacuum them in parallel.
+AObloat function:
+
+Install: 
+psql -d dbname -af ./aobloat/check_ao_bloat.sql
+
+Example:
+select * from AOtable_bloatcheck('schemaname');
+
+Information:
+Use this function to check bloat of AO table in the schema specified. (Not for heap table)
+
+
+----------------------------
+gp_vacuum_script: Check bloat table (include: heap / ao tables), vacuum them in parallel.
 
 Usage:
   perl $cmd_name [OPTIONS]
@@ -50,4 +63,8 @@ Examples:
   
   perl $cmd_name --help
   
+
+
+
+
 
