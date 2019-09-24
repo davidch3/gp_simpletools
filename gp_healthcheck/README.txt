@@ -1,3 +1,17 @@
+-------------------------
+aobloat:
+
+Install: 
+psql -d dbname -af ./aobloat/check_ao_bloat.sql
+
+Example:
+select * from AOtable_bloatcheck('schemaname');
+
+Information:
+Use this function to check bloat of AO table in the schema specified. (Not for heap table)
+
+
+-------------------------
 gp_healthcheck.pl
 
 Usage:
@@ -47,32 +61,6 @@ Examples:
   
   perl gp_healthcheck.pl --help
 
-
--------------------------
-skew:
-
-Install: 
-psql -d dbname -af ./skew/skewcheck_func.sql
-
-Example:
-select * from skewcheck_func('schemaname');
-
-Information:
-Use this function to check dataskew for the schema specified.
-Function will skip table size less than 1GB.
-Function will output data skew larger than 1.5 and data are not distributed in all segments.
-
--------------------------
-aobloat:
-
-Install: 
-psql -d dbname -af ./aobloat/check_ao_bloat.sql
-
-Example:
-select * from AOtable_bloatcheck('schemaname');
-
-Information:
-Use this function to check bloat of AO table in the schema specified. (Not for heap table)
 
 
 
