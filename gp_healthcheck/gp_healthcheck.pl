@@ -11,6 +11,7 @@ my $fh_log;
 my @schema_list;
 my $schema_str;
 my $seg_count;
+my $gpver;
 
 my $HELP_MESSAGE = qq{
 Usage:
@@ -190,6 +191,25 @@ sub set_env
    $ENV{"PGPASSWORD"}=$password;
 
    return 0;
+}
+
+sub get_gpver {
+  my @tmpstr;
+  my @tmpver;
+  my $sql = qq{select version();};
+  my $sver=`psql -A -X -t -c "$sql" -d postgres` ;
+  my $ret=$?;
+  if($ret) { 
+    print "Get GP version error!\n";
+    exit 1;
+  }
+  chomp($sver);
+  @tmpstr = split / /,$sver;
+  print $tmpstr[4]."\n";
+  @tmpver = split /\./,$tmpstr[4];
+  print $tmpver[0]."\n";
+  
+  return $tmpver[0];
 }
 
 
@@ -499,6 +519,7 @@ sub chk_catalog {
   info_notimestr("pg_attribute count:           $pg_attribute_count\n");
   info_notimestr("\n");
   
+  ####Query relstorage
   $sql = qq{select a.nspname schemaname,
             case when b.relstorage='a' then 'AO row' when b.relstorage='c' 
             then 'AO column' when b.relstorage='h' 
@@ -512,11 +533,43 @@ sub chk_catalog {
   my $tabletype=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
+    error("Table type count per schema error! \n");
+    return(-1);
+  }
+  info("---Table type info per schema\n");
+  info_notimestr("$tabletype\n");  
+
+  $sql = qq{select 
+            case when b.relstorage='a' then 'AO row' when b.relstorage='c' 
+            then 'AO column' when b.relstorage='h' 
+            then 'Heap' when b.relstorage='x' 
+            then 'External' else 'Others' end tabletype,
+            count(*) 
+            from pg_namespace a,pg_class b 
+            where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+            group by 1 order by 1;
+           };
+  my $tabletype=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
     error("Table type count error! \n");
     return(-1);
   }
   info("---Table type info\n");
   info_notimestr("$tabletype\n");  
+  
+  #####Query subpartition count
+  $sql = qq{select schemaname||'.'||tablename as tablename,count(*) as sub_count from pg_partitions
+            group by 1 order by 2 desc limit 100;
+           };
+  my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Subpartition count error! \n");
+    return(-1);
+  }
+  info("---Subpartition info\n");
+  info_notimestr("$subpart\n");  
   
 }
 
@@ -553,10 +606,17 @@ sub chk_activity {
   my ($sql,$ret);
   
   print "---Check pg_stat_activity\n";
-  $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
-             from pg_stat_activity where current_query='<IDLE> in transaction' and 
-             (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
-           };
+  if ($gpver >= 6) {
+    $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where query='<IDLE> in transaction' and 
+               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+             };
+  } else {
+    $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where current_query='<IDLE> in transaction' and 
+               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+             };
+  }
   my $idle_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -566,13 +626,19 @@ sub chk_activity {
   info("---Check IDLE in transaction over one day\n");
   info_notimestr("$idle_info\n");
   
-  $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
-             from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day'
-           };
+  if ($gpver >= 6) {
+    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where query not like '%IDLE%' and now()-query_start>interval '1 day'
+             };
+  } else {
+    $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day'
+             };
+  }
   my $query_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
-    error("Query IDLE in transaction error! \n");
+    error("Query long SQL error! \n");
     return(-1);
   }
   info("---Check SQL running over one day\n");
@@ -619,6 +685,13 @@ sub skewcheck {
     
     if ($pid==0) {
       #Child process
+      my $tmp_attcolname;
+      if ($gpver >= 6) {
+        $tmp_attcolname="distkey";
+      } else {
+        $tmp_attcolname="attrnums";
+      }
+      
       $sql = qq{ drop table if exists skewresult_new2;
                  create temp table skewresult_new2 (
                    tablename varchar(100),
@@ -656,14 +729,14 @@ sub skewcheck {
                  as 
                    select tablename,string_agg(attname,',' order by attid) dk
                    from (
-                     select nsp.nspname||'.'||rel.relname tablename,a.attrnums[attid] attnum,attid,att.attname
+                     select nsp.nspname||'.'||rel.relname tablename,a.${tmp_attcolname}[attid] attnum,attid,att.attname
                      from gp_distribution_policy a,
                           generate_series(1,50) attid,
                           pg_attribute att,
                           pg_class rel,
                           pg_namespace nsp
                      where rel.oid=a.localoid and rel.relnamespace=nsp.oid and a.localoid=att.attrelid
-                     and array_upper(a.attrnums,1)>=attid and a.attrnums[attid]=att.attnum
+                     and array_upper(a.${tmp_attcolname},1)>=attid and a.${tmp_attcolname}[attid]=att.attnum
                      and relname not like '%_1_prt_%' and nsp.nspname='$schema_list[$icalc]'
                    ) foo
                    group by 1
@@ -1054,6 +1127,7 @@ sub main{
   info("-----------------------------------------------------\n");
   info("------Begin GPDB health check\n");
   info("-----------------------------------------------------\n");
+  $gpver=get_gpver();
   
   ########
   get_schema();
