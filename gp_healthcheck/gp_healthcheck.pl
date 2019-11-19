@@ -653,6 +653,7 @@ sub skewcheck {
   my $pid;
   my $icalc;
   my $itotal=$#schema_list+1;
+  my $resultmsg;
   
   print "---Begin to check skew, jobs [$concurrency]\n";
   $sql = qq{ drop table if exists check_skew_result;
@@ -779,10 +780,10 @@ sub skewcheck {
                  left join skewresult_tabledk t4 on t1.tablename=t4.tablename
                  where t2.rn=1;
                };
-      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+      $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("Skew check in $schema_list[$icalc] error! \n");
+        error("Skew check in $schema_list[$icalc] error! \n$resultmsg\n");
         exit(-1);
       }
       exit(0);
@@ -822,6 +823,7 @@ sub bloatcheck {
   my $pid;
   my $icalc;
   my $itotal=$#schema_list+1;
+  my $resultmsg;
   
   print "---Begin to check bloat, jobs [$concurrency]\n";
   $sql = qq{ drop table if exists bloat_skew_result;
@@ -830,7 +832,7 @@ sub bloatcheck {
                relstorage varchar(10),
                bloat numeric(18,2)
              ) distributed randomly; };
-  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
   $ret = $? >> 8;
   if ($ret) {
     error("recreate bloat_skew_result error! \n");
@@ -948,10 +950,10 @@ sub bloatcheck {
                WHERE sml.relpages - live_size_blocks > 2
              ) AS blochk where wastedsize>1073741824 and bloat>3;
            };
-  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+  $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
   $ret = $? >> 8;
   if ($ret) {
-    error("Heap table bloat check error! \n");
+    error("Heap table bloat check error! \n$resultmsg\n");
     return(-1);
   }
   
@@ -970,10 +972,10 @@ sub bloatcheck {
     if ($pid==0) {
       #Child process
       $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>3) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
-      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+      $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("Unload $schema_list[$icalc] AO table error! \n");
+        error("Unload $schema_list[$icalc] AO table error! \n$resultmsg\n");
         exit(-1);
       }
       $sql = qq{ copy bloat_skew_result from '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
@@ -1042,6 +1044,7 @@ sub def_partition {
   my ($sql,$ret);
   my $pid;
   my $icalc;
+  my $resultmsg;
 
   print "---Begin to check default partition, jobs [$concurrency]\n";
   $sql = qq{ select partitionschemaname||'.'||partitiontablename from pg_partitions where partitionisdefault=true and partitionschemaname in $schema_str; };
@@ -1079,9 +1082,9 @@ sub def_partition {
       #Child process
       chomp($defpart_list[$icalc]);
       $sql = qq{ insert into def_partition_count_result select '$defpart_list[$icalc]',count(*) from $defpart_list[$icalc]; };
-      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+      $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
       if ($ret) {
-        error("$defpart_list[$icalc] count error! \n");
+        error("$defpart_list[$icalc] count error! \n$resultmsg\n");
         exit(-1);
       }
       exit(0);
