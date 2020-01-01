@@ -126,10 +126,6 @@ sub getOption{
     print "Input error: The following options should be specified one: all, include-schema, include-schema-file, exclude-schema, exclude-schema-file\n";
     exit 0;
   }
-  if ( $concurrency=="" || $concurrency<=0 ) {
-    print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2\n";
-    exit 0;
-  }
 
   #print $hostname."\n".$port."\n".$database."\n".$username."\n".$password."\n".$IS_HELP."\n".$IS_ALL."\n".$#CHK_SCHEMA."\n".$SCHEMA_FILE."\n".$concurrency."\n".$LOG_DIR."\n";
   
@@ -508,10 +504,10 @@ sub bloatcheck {
     if ($pid==0) {
       #Child process
       $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>1.5) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
-      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+      my $errmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("Unload $schema_list[$icalc] AO table error! \n");
+        error("Unload $schema_list[$icalc] AO table error! \n$errmsg\n");
         exit(-1);
       }
       $sql = qq{ copy bloat_skew_result from '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
