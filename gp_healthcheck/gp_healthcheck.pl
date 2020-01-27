@@ -948,7 +948,7 @@ sub bloatcheck {
                    JOIN pg_namespace_bloat_chk nn ON cc.relnamespace = nn.oid_ss AND nn.nspname = rs.schemaname AND nn.nspname <> 'information_schema'
                ) AS sml
                WHERE sml.relpages - live_size_blocks > 2
-             ) AS blochk where wastedsize>1073741824 and bloat>3;
+             ) AS blochk where wastedsize>1073741824 and bloat>2;
            };
   $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
   $ret = $? >> 8;
@@ -971,7 +971,7 @@ sub bloatcheck {
     
     if ($pid==0) {
       #Child process
-      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>3) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
+      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>1.9) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
       $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
       $ret = $? >> 8;
       if ($ret) {
