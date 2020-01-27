@@ -14,14 +14,19 @@ declare
   v_total bigint;
 BEGIN
   set statement_timeout='24h';
-
-  v_sql := 'drop table if exists ao_aovisimap_hidden;
-            create temp table ao_aovisimap_hidden as
-             select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
-             FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
-             where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
-  execute v_sql;
+  
+  BEGIN
+    v_sql := 'drop table if exists ao_aovisimap_hidden;
+              create temp table ao_aovisimap_hidden as
+               select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
+               (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
+               FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
+               where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
+    execute v_sql;
+  EXCEPTION WHEN undefined_table THEN
+    raise info 'Any relation oid not found because of a concurrent drop operation, skipped!';
+    return;
+  END;
   
   v_sql := 'select reloid,nspname,relname,sum(hidden) hidden_tupcount,sum(total) total_tupcount from ao_aovisimap_hidden group by 1,2,3';
   for i_oid,v_schema,v_table,v_hidden,v_total in
@@ -36,7 +41,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -63,14 +68,19 @@ declare
 BEGIN
   set statement_timeout='24h';
 
-  v_sql := 'drop table if exists ao_aovisimap_hidden;
-            create temp table ao_aovisimap_hidden as
-             select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
-             FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
-             where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
-             and nsp.nspname in '||in_schemaname;
-  execute v_sql;
+  BEGIN
+    v_sql := 'drop table if exists ao_aovisimap_hidden;
+              create temp table ao_aovisimap_hidden as
+               select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
+               (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
+               FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
+               where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
+               and nsp.nspname in '||in_schemaname;
+    execute v_sql;
+  EXCEPTION WHEN undefined_table THEN
+    raise info 'Any relation oid not found because of a concurrent drop operation, skipped!';
+    return;
+  END;
   
   v_sql := 'select reloid,nspname,relname,sum(hidden) hidden_tupcount,sum(total) total_tupcount from ao_aovisimap_hidden group by 1,2,3';
   for i_oid,v_schema,v_table,v_hidden,v_total in
@@ -85,7 +95,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -128,14 +138,19 @@ BEGIN
   end loop;
   raise info '%',v_schemastr;
   
-  v_sql := 'drop table if exists ao_aovisimap_hidden;
-            create temp table ao_aovisimap_hidden as
-             select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
-             FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
-             where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
-             and nsp.nspname in '||v_schemastr;
-  execute v_sql;
+  BEGIN
+    v_sql := 'drop table if exists ao_aovisimap_hidden;
+              create temp table ao_aovisimap_hidden as
+               select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
+               (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
+               FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
+               where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')
+               and nsp.nspname in '||v_schemastr;
+    execute v_sql;
+  EXCEPTION WHEN undefined_table THEN
+    raise info 'Any relation oid not found because of a concurrent drop operation, skipped!';
+    return;
+  END;
   
   v_sql := 'select reloid,nspname,relname,sum(hidden) hidden_tupcount,sum(total) total_tupcount from ao_aovisimap_hidden group by 1,2,3';
   for i_oid,v_schema,v_table,v_hidden,v_total in
@@ -150,7 +165,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -177,13 +192,18 @@ declare
   v_hidden bigint;
   v_total bigint;
 BEGIN  
-  v_sql := 'drop table if exists ao_aovisimap_hidden;
-            create temp table ao_aovisimap_hidden as
-             select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
-             (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
-             FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
-             where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
-  execute v_sql;
+  BEGIN
+    v_sql := 'drop table if exists ao_aovisimap_hidden;
+              create temp table ao_aovisimap_hidden as
+               select rel.oid reloid,nsp.nspname,rel.relname,rel.gp_segment_id segid,
+               (gp_toolkit.__gp_aovisimap_hidden_typed(rel.oid)::record).*
+               FROM gp_dist_random(''pg_class'') rel, pg_namespace nsp 
+               where nsp.oid=rel.relnamespace and rel.relkind=''r'' and rel.relstorage in (''a'',''c'')';
+    execute v_sql;
+  EXCEPTION WHEN undefined_table THEN
+    raise info 'Any relation oid not found because of a concurrent drop operation, skipped!';
+    return;
+  END;
   
   v_sql := 'select reloid,nspname,relname,sum(hidden) hidden_tupcount,sum(total) total_tupcount from ao_aovisimap_hidden group by 1,2,3';
   for i_oid,v_schema,v_table,v_hidden,v_total in
@@ -198,7 +218,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
