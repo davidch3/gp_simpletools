@@ -41,7 +41,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -95,7 +95,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -165,7 +165,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
@@ -218,7 +218,7 @@ BEGIN
     ELSE
         v_record.percent_hidden := 0::numeric(5,2);
     END IF;
-    v_record.bloat := v_record.percent_hidden / (100.1-v_record.percent_hidden);
+    v_record.bloat := 100 / (100.1-v_record.percent_hidden);
         
     return next v_record;
   end loop;
