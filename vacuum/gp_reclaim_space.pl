@@ -1,15 +1,16 @@
 #!/usr/bin/perl
 use strict;
+use Time::Local;
 use Getopt::Long;
 use POSIX ":sys_wait_h";
 use POSIX;
 
 my $cmd_name;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","postgres","gpadmin","gpadmin");    ###default
-my ($IS_HELP,$IS_ALL,@CHK_SCHEMA,$SCHEMA_FILE,@EXCLUDE_SCHEMA,$EXCLUDE_SCHEMA_FILE,$concurrency,$LOG_DIR);
-my $fh_log;
+my ($IS_HELP,$IS_ALL,$CHK_SCHEMA,$SCHEMA_FILE,$EXCLUDE_SCHEMA,$EXCLUDE_SCHEMA_FILE,$concurrency,$WEEK_DAYS,$EXCLUDE_DATE,$DURATION);
 my @schema_list;
 my $schema_str;
+my $starttime;
 
 my $HELP_MESSAGE = qq{
 Usage:
@@ -37,28 +38,40 @@ Options:
   --all | -a
     Check all the schema in database.
   
-  --log-dir | -l <log_directory>
-    The directory to write the log file. Default: ~/gpAdminLogs.
-  
   --jobs <parallel_job_number>
     The number of parallel jobs to vacuum. Default: 2
   
   --include-schema <schema_name>
-    Vacuum only specified schema(s). --include-schema can be specified multiple times.
+    Vacuum only specified schema(s). Example: dw,dm,ods
   
   --include-schema-file <schema_filename>
     A file containing a list of schema to be vacuum.
   
   --exclude-schema <schema_name>
-    vacuum all tables except the tables in the specified schema(s). --exclude-schema can be specified multiple times.
+    vacuum all tables except the tables in the specified schema(s). Example: dw,dm,ods.
 
   --exclude-schema-file <schema_filename>
     A file containing a list of schemas to be excluded for vacuum.
+  
+  --week-day <week_day>
+    Run this program on the days of week. Example: 6,7
+    
+  --exclude-date <exclude_dates>
+    Do not run this program on the days of month. Example: 1,2,5,6.
+    
+  --duration <hours>
+    Duration of the program running from beginning to end. Example: 1 for one hour, 0.5 for half an hour. If not specified, do not stop till reclaim all bloat tables.
 
 Examples:
-  perl $cmd_name -d testdb -u gpadmin --include-schema public --include-schema gpp_sync --jobs 3
+  perl $cmd_name -d testdb -u gpadmin --include-schema gpp_sync,syndata --jobs 3
   
-  perl $cmd_name -d testdb -u gpadmin --exclude-schema public --exclude-schema dw --jobs 3
+  perl $cmd_name -d testdb -u gpadmin --include-schema-file /tmp/schema.conf --jobs 3
+
+  perl $cmd_name -d testdb -u gpadmin --exclude-schema dw,public --jobs 3
+
+  perl $cmd_name -d testdb -u gpadmin -s gpp_sync,syndata --jobs 3 --week-day 6,7 --exclude-date 1,2,5,6 --duration 2
+  
+  perl $cmd_name -d testdb -u gpadmin -e dw,public --jobs 3
   
   perl $cmd_name --help
   
@@ -82,9 +95,13 @@ sub getOption{
   }
   
   $concurrency = 2;
-  $LOG_DIR = "~/gpAdminLogs";
+  $CHK_SCHEMA = "";
+  $EXCLUDE_SCHEMA = "";
   $SCHEMA_FILE = "";
   $EXCLUDE_SCHEMA_FILE = "";
+  $WEEK_DAYS = "";
+  $EXCLUDE_DATE = "";
+  $DURATION = 0;
   
   if (length($ENV{PGDATABASE}) > 0) {
     $database = $ENV{PGDATABASE};
@@ -92,17 +109,19 @@ sub getOption{
   GetOptions(
       'hostname|h:s'          => \$hostname,
       'port|p:s'              => \$port,
-      'dbname:s'              => \$database,
-      'username:s'            => \$username,
+      'dbname|d:s'            => \$database,
+      'username|u:s'          => \$username,
       'password|pw:s'         => \$password,
       'help|?!'               => \$IS_HELP,
       'a|all!'                => \$IS_ALL,
-      'include-schema|s:s'    => \@CHK_SCHEMA,
+      'include-schema|s:s'    => \$CHK_SCHEMA,
       'include-schema-file:s' => \$SCHEMA_FILE,
-      'exclude-schema:s'      => \@EXCLUDE_SCHEMA,
+      'exclude-schema|e:s'    => \$EXCLUDE_SCHEMA,
       'exclude-schema-file:s' => \$EXCLUDE_SCHEMA_FILE,
       'jobs:s'                => \$concurrency,
-      'log-dir:s'             => \$LOG_DIR,
+      'week-day:s'            => \$WEEK_DAYS,
+      'exclude-date:s'        => \$EXCLUDE_DATE,
+      'duration:s'            => \$DURATION,
   );
   if(@ARGV != 0){
     print "Input error: [@ARGV]\nPlease show help: perl $cmd_name --help\n";
@@ -114,9 +133,9 @@ sub getOption{
   }
   my $itmp=0;
   if ($IS_ALL) { $itmp++; }
-  if ($#CHK_SCHEMA>=0) { $itmp++; }
+  if (length($CHK_SCHEMA)>0) { $itmp++; }
   if (length($SCHEMA_FILE)>0) { $itmp++; }
-  if ($#EXCLUDE_SCHEMA>=0) { $itmp++; }
+  if (length($EXCLUDE_SCHEMA)>0) { $itmp++; }
   if (length($EXCLUDE_SCHEMA_FILE)>0) { $itmp++; }
   if ( $itmp>1 ) {
     print "Input error: The following options may not be specified together: all, include-schema, include-schema-file, exclude-schema, exclude-schema-file\n";
@@ -124,6 +143,10 @@ sub getOption{
   }
   if ( $itmp==0 ) {
     print "Input error: The following options should be specified one: all, include-schema, include-schema-file, exclude-schema, exclude-schema-file\n";
+    exit 0;
+  }
+  if ( $concurrency=="" || $concurrency<=0 ) {
+    print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2\n";
     exit 0;
   }
 
@@ -161,47 +184,71 @@ sub showTime
    return $current;   
 }
 
-sub initLog{
-   my $logday=getCurrentDate();
-   my $logfile=open($fh_log, '>>', "$ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log");
-   unless ($logfile){
-     print "[ERROR]:Cound not open logfile $ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log\n";
-     exit -1;
-   }
+sub checkWeekday
+{
+  my ($sRunday) = @_;
+  my $sDate=getCurrentDate();
+  
+  my($yyyy,$mm,$dd)=$sDate=~/^(\d{4})(\d{2})(\d{2})$/;
+  my $epoch_seconds=timelocal(0,0,0,$dd,$mm-1,$yyyy);
+  my $weekDay= strftime("%u",localtime($epoch_seconds));
+  
+  if ( $sRunday =~ /$weekDay/ ) {
+    return(1);
+  } else {
+    return(0);
+  }
+}
+
+sub checkCurrentDay
+{
+  my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time());
+  my ($exdaystr)=@_;
+  my @tmpstr=split /,/,$exdaystr;
+  my $i;
+  my $ret=0;
+  
+  $mday = sprintf("%02d", $mday);
+  
+  for ($i=0;$i<=$#tmpstr;$i++) {
+    chomp($tmpstr[$i]);
+    if ( $mday eq sprintf("%02d", $tmpstr[$i]) ) {
+      $ret=1;
+      last;
+    }
+  }
+
+  return $ret;
 }
 
 sub info{
    my ($printmsg)=@_;
-   print $fh_log "[".showTime()." INFO] ".$printmsg;
+   print "[".showTime()." INFO] ".$printmsg;
    return 0;
 }
 
 sub info_notimestr{
    my ($printmsg)=@_;
-   print $fh_log $printmsg;
+   print $printmsg;
    return 0;
 }
 
 sub error{
    my ($printmsg)=@_;
-   print $fh_log "[".showTime()." ERROR] ".$printmsg;
-   return 0;
-}
-
-sub closeLog{
-   close $fh_log;
+   print "[".showTime()." ERROR] ".$printmsg;
    return 0;
 }
 
 sub set_env
 {
-   $ENV{"PGHOST"}=$hostname;
-   $ENV{"PGPORT"}=$port;
-   $ENV{"PGDATABASE"}=$database;
-   $ENV{"PGUSER"}=$username;
-   $ENV{"PGPASSWORD"}=$password;
+  
+  $ENV{"PGHOST"}=$hostname;
+  $ENV{"PGPORT"}=$port;
+  $ENV{"PGDATABASE"}=$database;
+  $ENV{"PGUSER"}=$username;
+  $ENV{"PGPASSWORD"}=$password;
 
-   return 0;
+  return 0;
 }
 
 
@@ -235,17 +282,6 @@ sub handler {
 
 
 
-sub check_process{
-  my $is_exist = `ps -ef |grep $cmd_name|grep -v grep |grep -v "\.log" |wc -l`;
-  my $ret = $? >> 8;
-  if ($ret) {
-    error("Check $cmd_name process error\n");
-    return -1;
-  }
-  chomp($is_exist);
-  return $is_exist;
-}
-
 
 
 sub get_schema{
@@ -264,8 +300,8 @@ sub get_schema{
     }
   }
   ###--include-schema
-  if ($#CHK_SCHEMA>=0) {
-    push @schema_list,@CHK_SCHEMA ;
+  if (length($CHK_SCHEMA)>0) {
+    @schema_list = split /,/,$CHK_SCHEMA;
   }
   ###--include-schema-file
   if (length($SCHEMA_FILE)>0) {
@@ -287,19 +323,21 @@ sub get_schema{
     close SCHFILE;
   }
   ###--exclude-schema
-  if ($#EXCLUDE_SCHEMA>=0) {
+  if (length($EXCLUDE_SCHEMA)>0) {
+    @exclude_list = split /,/,$EXCLUDE_SCHEMA;
+    
     $schema_str="(";
-    for ($i=0;$i<$#EXCLUDE_SCHEMA+1;$i++) {
-      chomp($EXCLUDE_SCHEMA[$i]);
-      if ($i < $#EXCLUDE_SCHEMA) { $schema_str = $schema_str."\'".$EXCLUDE_SCHEMA[$i]."\',"; }
-      elsif ($i == $#EXCLUDE_SCHEMA) { $schema_str = $schema_str."\'".$EXCLUDE_SCHEMA[$i]."\')"; }
+    for ($i=0;$i<$#exclude_list+1;$i++) {
+      chomp($exclude_list[$i]);
+      if ($i < $#exclude_list) { $schema_str = $schema_str."\'".$exclude_list[$i]."\',"; }
+      elsif ($i == $#exclude_list) { $schema_str = $schema_str."\'".$exclude_list[$i]."\')"; }
     }
     print "Exclude SCHEMA: $schema_str\n";
     $sql = qq{ select nspname from pg_namespace where nspname not like 'pg%' and nspname not like 'gp%' and nspname not in $schema_str order by 1; };
     @schema_list = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
     $ret = $? >> 8;
     if ($ret) {
-      error("Query schema name exclude error\n");
+      error("Query schema name exclude file error\n");
       exit(1);
     }
   }
@@ -479,7 +517,7 @@ sub bloatcheck {
                    JOIN pg_namespace_bloat_chk nn ON cc.relnamespace = nn.oid_ss AND nn.nspname = rs.schemaname AND nn.nspname <> 'information_schema'
                ) AS sml
                WHERE sml.relpages - live_size_blocks > 2
-             ) AS blochk where wastedsize>1073741824 and bloat>2;
+             ) AS blochk where wastedsize>1073741824 and bloat>1.9;
            };
   `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
   $ret = $? >> 8;
@@ -503,11 +541,11 @@ sub bloatcheck {
     
     if ($pid==0) {
       #Child process
-      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>1.9) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
-      my $errmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
+      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>0.95) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
+      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("Unload $schema_list[$icalc] AO table error! \n$errmsg\n");
+        error("Unload $schema_list[$icalc] AO table error! \n");
         exit(-1);
       }
       $sql = qq{ copy bloat_skew_result from '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
@@ -551,26 +589,34 @@ sub bloatcheck {
 
 
 
-sub parallel_vacuum{
+sub parallel_run{
   my ($sql,$ret);
   my $pid;
   my $icalc;
-  my @vacuumlist;
+  my @reclaimlist;
+  my $nowtime;
+  my $t_interval;
   
-  print "---Start vacuum, jobs [$concurrency]\n";
+  print "---Start reclaim space, jobs [$concurrency]\n";
   $sql = qq{ select tablename from bloat_skew_result order by bloat desc; };
-  @vacuumlist = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  @reclaimlist = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("load bloat table result error! \n");
     return(-1);
   }
 
-  my $itotal=$#vacuumlist+1;
+  my $itotal=$#reclaimlist+1;
   $num_proc = 0;
   $num_finish = 0;
 
   for ($icalc=0; $icalc<$itotal; $icalc++){
+    $nowtime=time();
+    $t_interval=$nowtime-$starttime;
+    if ( $DURATION>0 && $t_interval>$DURATION*3600 ) {
+      info("Program is time out, stopping now!\n");
+      last;
+    }
     
     $pid=fork();
     if(!(defined ($pid))) {
@@ -580,15 +626,16 @@ sub parallel_vacuum{
     
     if ($pid==0) {
       #Child process
-      chomp($vacuumlist[$icalc]);
-      $sql = qq{ vacuum $vacuumlist[$icalc]; analyze $vacuumlist[$icalc]; };
+      chomp($reclaimlist[$icalc]);
+      $sql = qq{ alter table $reclaimlist[$icalc] set with (reorganize=true); };
       info(" [$sql]\n");
-      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+      my $tmp_result=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("vacuum $vacuumlist[$icalc] error! \n");
+        error("alter table $reclaimlist[$icalc] error! \n[$tmp_result]\n");
         exit(-1);
       }
+      
       exit(0);
       
     } else {                         
@@ -615,33 +662,32 @@ sub parallel_vacuum{
 
 
 sub main{
-  my $ret;
-  
   getOption();
   set_env();
-  initLog();
+  my $chkret1=checkWeekday($WEEK_DAYS);
+  my $chkret2=checkCurrentDay($EXCLUDE_DATE);
+  
+  if ( $chkret2 ) {
+    info("Today is ".getCurrentDate().". Program stopped!\n");
+    exit 0;
+  }
+  if ( $chkret1==0 ) {
+    info("Today is not ".$WEEK_DAYS." of week. Program stopped!\n");
+    exit 0;
+  }
+  
   info("-----------------------------------------------------\n");
   info("------Program start...\n");
   info("-----------------------------------------------------\n");
   
-  ########
-  $ret = check_process();
-  if ( $ret>1 ) {
-    info("There is another $cmd_name process is running. \n");
-    print "There is another $cmd_name process is running. \n";
-  }
-  if ( $ret==1 ) {
-    get_schema();
-    bloatcheck();
-    parallel_vacuum();
-  }
-  
-  ########
+  $starttime=time();
+  get_schema();
+  bloatcheck();
+  parallel_run();
   
   info("-----------------------------------------------------\n");
   info("------Finished !\n");
   info("-----------------------------------------------------\n");
-  closeLog();
 }
 
 main();
