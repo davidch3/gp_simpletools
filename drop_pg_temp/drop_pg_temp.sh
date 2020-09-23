@@ -3,7 +3,7 @@
 source /usr/local/greenplum-db/greenplum_path.sh
 
 LEAKED_SCHEMA_QUERY="
-    SELECT 'DROP SCHEMA IF EXISTS '||schema||';' FROM (
+    SELECT 'DROP SCHEMA IF EXISTS '||schema||' CASCADE;' FROM (
       SELECT distinct nspname as schema
         FROM (
           SELECT nspname, replace(nspname, 'pg_temp_','')::int as sess_id
