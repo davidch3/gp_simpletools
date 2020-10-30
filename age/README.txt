@@ -14,7 +14,7 @@ Example:
 perl vacuum_high_age.pl testdb 2 /home/gpadmin/gpAdminLogs
 
 vacuum_high_age_5.pl:
-Use for GP5.x.x
+Use for GP5.x.x / GP6.x.x
 Find out age>300,000,000 (Limit 9000), use vacuum freeze. Program have 3 parallel jobs.
 Usage:
 perl vacuum_high_age_5.pl dbname duration(hours) log_dir
