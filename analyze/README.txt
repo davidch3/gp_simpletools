@@ -31,14 +31,19 @@ This program skip rootpartition analyze. It will analyze all heap table, and AOt
 This program can be setting in crontab, running every day.
 
 
-analyze_root_for_schema.pl
+analyze_root_for_schema.pl   (Old version)
+
+
+analyze_root.pl
 
 Example:
-perl analyze_root_for_schema.pl dbname schemaname concurrency
+perl analyze_root.pl dbname schema concurrency
 
 Information:
 If schemaname=ALL, scan all schema in database for analyze
-You can specified mutli schema , for example:  perl analyze_root_for_schema.pl dbname public,dw,ods 10
+You can specified mutli schema.
+For example:  perl analyze_root.pl dbname ALL 10
+              perl analyze_root.pl dbname public,dw,ods 10
 This program only analyze rootpartition tables.
 This program can be setting in crontab, running weekly or monthly.
 
