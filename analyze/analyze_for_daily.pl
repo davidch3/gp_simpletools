@@ -143,7 +143,7 @@ sub get_tablelist{
       
    ###AO table list
    $sql = qq{ drop table if exists analyze_target_list_${currdatetime};
-              create table analyze_target_list_${currdatetime} (like gpcheck_admin.check_ao_state);
+              create table analyze_target_list_${currdatetime} (like check_ao_state);
 
               insert into analyze_target_list_${currdatetime}
               select *,current_timestamp from get_AOtable_state_list('${tmp_schemastr}') a;
@@ -159,7 +159,7 @@ sub get_tablelist{
               select objid,schemaname,objname,statime from pg_stat_operations op
               inner join (
                 select reloid,last_checktime,row_number() over(partition by reloid order by last_checktime desc) rn
-                from gpcheck_admin.check_ao_state
+                from check_ao_state
               ) aost
               on op.objid=aost.reloid 
               where op.actionname='ANALYZE' and aost.rn=1 and op.statime>=aost.last_checktime;
@@ -167,12 +167,12 @@ sub get_tablelist{
               select 'analyze '||schemaname||'.'||tablename||';' from
               (
                 select a.reloid,a.schemaname,a.tablename
-                from gpcheck_admin.check_ao_state a,analyze_target_list_${currdatetime} b
+                from check_ao_state a,analyze_target_list_${currdatetime} b
                 where a.reloid=b.reloid and a.modcount<>b.modcount
                 union all
                 select b.reloid,b.schemaname,b.tablename 
                 from analyze_target_list_${currdatetime} b 
-                where b.reloid not in (select reloid from gpcheck_admin.check_ao_state)
+                where b.reloid not in (select reloid from check_ao_state)
               ) t1
               where t1.reloid not in (select reloid from ao_analyze_stat_temp);
              };
@@ -220,12 +220,12 @@ sub run_after_analyze{
    ${tmp_schemastr} =~ s/\'/\'\'/g;
    print "tmp_schemastr[".$tmp_schemastr."]\n";
    
-   $sql = qq{ delete from gpcheck_admin.check_ao_state a
+   $sql = qq{ delete from check_ao_state a
               using analyze_target_list_${currdatetime} b where a.reloid=b.reloid;
-              delete from gpcheck_admin.check_ao_state a
+              delete from check_ao_state a
               where reloid not in (select oid from pg_class);
               
-              insert into gpcheck_admin.check_ao_state
+              insert into check_ao_state
               select reloid,schemaname,tablename,modcount,current_timestamp from analyze_target_list_${currdatetime} a;
               
               drop table if exists analyze_target_list_${currdatetime};
@@ -238,11 +238,11 @@ sub run_after_analyze{
       return -1;
    }
    
-   $sql = qq{ vacuum analyze gpcheck_admin.check_ao_state; };
+   $sql = qq{ vacuum analyze check_ao_state; };
    `psql -A -X -t -c "$sql"` ;
    $ret=$?;
    if($ret) { 
-      print "vacuum analyze gpcheck_admin.check_ao_state error\n"; 
+      print "vacuum analyze check_ao_state error\n"; 
       return -1;
    }
    
