@@ -19,7 +19,7 @@ except ImportError, e:
 EXECNAME = os.path.split(__file__)[-1]
 
 Help_Message = """
-CustomErr:
+Usage:
   python {APPNAME} [OPTIONS]
   
 Options:
@@ -606,7 +606,7 @@ def chk_activity():
         if int(gpver) >= 6:
             sql = "select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr" \
                   "  from pg_stat_activity" \
-                  " where query='<IDLE> in transaction' " \
+                  " where state='idle in transaction' " \
                   "   and (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day');"
         else:
             sql = "select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr" \
@@ -621,7 +621,7 @@ def chk_activity():
 
         if int(gpver) >= 6:
             sql = "select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr" \
-                  "  from pg_stat_activity where query not like '%IDLE%' and now()-query_start>interval '1 day';"
+                  "  from pg_stat_activity where state<>'idle' and now()-query_start>interval '1 day';"
         else:
             sql = "select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr" \
                   "  from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day';"

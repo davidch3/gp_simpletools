@@ -27,7 +27,7 @@ Options:
   --dbname | -d <database_name>
     Database name. If not specified, uses the value specified by the environment variable PGDATABASE, even if PGDATABASE is not specified, return error.
   
-  --username | -d <user_name>
+  --username | -u <user_name>
     The super user of GPDB. Default: gpadmin
     
   --password | -pw <password>
@@ -608,7 +608,7 @@ sub chk_activity {
   print "---Check pg_stat_activity\n";
   if ($gpver >= 6) {
     $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where query='<IDLE> in transaction' and 
+               from pg_stat_activity where state='idle in transaction' and 
                (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
              };
   } else {
@@ -628,7 +628,7 @@ sub chk_activity {
   
   if ($gpver >= 6) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where query not like '%IDLE%' and now()-query_start>interval '1 day'
+               from pg_stat_activity where state<>'idle' and now()-query_start>interval '1 day'
              };
   } else {
     $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
