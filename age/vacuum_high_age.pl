@@ -315,6 +315,10 @@ sub handler {
      }
    }
    
+   if ( $num_finish<$itotal ) {
+     my $unfinish = $itotal-$num_finish;
+     print $fh_log "[INFO]:Waiting for ".$unfinish." unfinished child processes\n";
+   }
    #waiting for all child finished;
    my $ichd=0;
    do {
@@ -326,6 +330,7 @@ sub handler {
 }
 
 my $ret = main();
+print $fh_log "[INFO]:Finish time:".showTime()."\n";
 close $fh_log;
 exit($ret);
 
