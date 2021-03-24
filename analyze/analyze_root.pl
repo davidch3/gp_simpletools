@@ -19,6 +19,10 @@ chomp($username);
 my $inputschema=$ARGV[1];
 my $concurrency=$ARGV[2];
 
+my $num_proc = 0;
+my $num_finish = 0;
+my $mainpid=$$;
+
 
 my $exclude_schema=qq{
  'gp_toolkit'
@@ -111,39 +115,6 @@ sub get_tablelist{
 }
 
 
-
-############################################################################################
-########################################Main funcion########################################
-############################################################################################
-my $num_proc = 0;
-my $num_finish = 0;
-my $pid;
-my $childpid;
-my $mainpid=$$;
-
-my $icalc;
-my $itotal;
-my $sql;
-my $ret;
-my @target_tablelist;
-
-
-set_env();
-
-my $analyze_schema = get_schema();
-print $analyze_schema."\n";
-($ret,@target_tablelist) = get_tablelist($analyze_schema);
-if ( $ret ) {
-   print "Get table list for analyze error!\n";
-   return -1;
-}
-
-$itotal=$#target_tablelist+1;
-print "Total count [".$itotal."]\n";
-
-
-
-
 ## == get the child signal,if the child process exit, then the $num_proc will reduce 1==
 $SIG{CHLD} = \&handler;
 
@@ -152,6 +123,7 @@ sub handler {
   
   $c_pid=$$;
   if ($c_pid==$mainpid) {
+  	if ($num_proc==0) { return 0; }
     while ( waitpid(-1, WNOHANG) > 0 ) { 
       $num_proc--;
       $num_finish++;
@@ -162,53 +134,84 @@ sub handler {
 ## == get the child signal,if the child process exit, then the $num_proc will reduce 1==
 
 
-
-for ($icalc=0; $icalc<$itotal;$icalc++){
+############################################################################################
+########################################Main funcion########################################
+############################################################################################
+sub main{
+  my $pid;
+  my $icalc;
+  my $itotal;
+  my $sql;
+  my $ret;
+  my @target_tablelist;
+  my $childpid;
+ 
   
-  $pid=fork();
-  if(!(defined ($pid))) {
-    print "Can not fork a child process!!!\n$!\n";
-    exit(-1);
+  set_env();
+  
+  my $analyze_schema = get_schema();
+  print $analyze_schema."\n";
+  ($ret,@target_tablelist) = get_tablelist($analyze_schema);
+  if ( $ret ) {
+     print "Get table list for analyze error!\n";
+     return -1;
   }
-  #$childpid=$$;    
   
-  if ($pid==0) {
-    #Child process
-    my $it;
-    my $irun;
-    my $sql;
-    my $where_str;
+  $itotal=$#target_tablelist+1;
+  print "Total count [".$itotal."]\n";
+  
+  for ($icalc=0; $icalc<$itotal;$icalc++){
     
-    chomp($target_tablelist[$icalc]);
-    $sql = $target_tablelist[$icalc];
-    print "[SQL]=[$sql]\n";
-    
-    my $tmp_result=`psql -A -X -t -c "$sql" 2>&1` ;
-    $ret=$?;
-    if ( $ret ){
-      print "Analyze error: ".$tmp_result."\n";
-    } 
-
-    exit(0);
-  } else {                         
-    #Parent process
-    $num_proc++;
-    if ($num_finish%10 == 0) {
-      print "Child process count [".$num_proc."], finish count[".$num_finish."/".$itotal."]\n";
+    $pid=fork();
+    if(!(defined ($pid))) {
+      print "Can not fork a child process!!!\n$!\n";
+      exit(-1);
     }
-    do {
-      sleep(1);
-    } until ( $num_proc < $concurrency );
+    $childpid=$$;    
+    
+    if ($pid==0) {
+      #Child process
+      my $it;
+      my $irun;
+      my $sql;
+      my $where_str;
+      
+      chomp($target_tablelist[$icalc]);
+      $sql = $target_tablelist[$icalc];
+      print "[SQL]=[$sql]\n";
+      
+      my $tmp_result=`psql -A -X -t -c "$sql" 2>&1` ;
+      $ret=$?;
+      if ( $ret ){
+        print "Analyze error: ".$tmp_result."\n";
+      } 
+  
+      exit(0);
+    } else {                         
+      #Parent process
+      $num_proc++;
+      if ($num_finish%10 == 0) {
+        print "Child process count [".$num_proc."], finish count[".$num_finish."/".$itotal."]\n";
+      }
+      do {
+        sleep(1);
+      } until ( $num_proc < $concurrency );
+    }
   }
+  
+  print "waiting for all child finished!\n";
+  my $ichd=0;
+  do {
+    while ( ($ichd=waitpid(-1, WNOHANG)) > 0 ) { $num_finish++; }
+    sleep(3);
+  } until ( $ichd < 0 );
+  
+  return 0;
 }
 
 
-#waiting for all child finished;
-my $ichd=0;
-do {
-  while ( ($ichd=waitpid(-1, WNOHANG)) > 0 ) { $num_finish++; }
-  sleep(3);
-} until ( $ichd < 0 );
+
+my $ret = main();
+exit($ret);
 
 
-exit 0;

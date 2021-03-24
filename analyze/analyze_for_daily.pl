@@ -20,6 +20,10 @@ my $inputschema=$ARGV[1];
 my $currdatetime=getCurrDateTime();
 my $concurrency=$ARGV[2];
 
+my $num_proc = 0;
+my $num_finish = 0;
+my $mainpid=$$;
+
 
 my $exclude_schema=qq{
  'gp_toolkit'
@@ -183,29 +187,7 @@ sub get_tablelist{
       print "Get AO table list error =$sql=\n"; 
       return -1;
    }
-   push @target_tablelist,@tmp_tablelist;
-
-
-   ####rootpartition table list
-   #my $weekday=getWeekday();
-   #if($weekday eq "7"){
-   #   print "analyze root partition on Sunday!\n";
-   #   ###root partition
-   #   $sql = qq{ select 'analyze rootpartition '||aa.nspname||'.'||bb.relname||';' 
-   #              from pg_namespace aa,pg_class bb
-   #              where aa.oid=bb.relnamespace and aa.nspname in ${curr_schema}
-   #              and bb.relkind='r' and bb.relstorage!='x'
-   #              and bb.relhassubclass=true; };
-   #   print "psql -A -X -t -c \"$sql\" \n";
-   #   @tmp_tablelist=`psql -A -X -t -c "$sql"` ;
-   #   $ret=$?;
-   #   if($ret) { 
-   #      print "psql 1 error =$sql=\n"; 
-   #      return -1;
-   #   }
-   #   push @target_tablelist,@tmp_tablelist;
-   #}
-   
+   push @target_tablelist,@tmp_tablelist;   
       
    return 0,@target_tablelist;
 }
@@ -250,31 +232,6 @@ sub run_after_analyze{
 }
 
 
-sub main{
-   my $pid;
-   my $icalc;
-   my $itotal;
-   my $sql;
-   my $ret;
-   my @target_tablelist;
-   my $num_proc = 0;
-   my $num_finish = 0;
-   my $childpid;
-   my $mainpid=$$;
-
-   
-   set_env();
-   my $analyze_schema = get_schema();
-   print $analyze_schema."\n";
-   ($ret,@target_tablelist) = get_tablelist($analyze_schema);
-   if ( $ret ) {
-      print "Get table list for analyze error!\n";
-      return -1;
-   }
-
-   $itotal=$#target_tablelist+1;
-   print "Total count [".$itotal."]\n";
-
 
 ## == get the child signal,if the child process exit, then the $num_proc will reduce 1==
 $SIG{CHLD} = \&handler;
@@ -295,53 +252,78 @@ sub handler {
 ## == get the child signal,if the child process exit, then the $num_proc will reduce 1==
 
 
-   for ($icalc=0; $icalc<$itotal;$icalc++){
-     
-     $pid=fork();
-     if(!(defined ($pid))) {
-       print "Can not fork a child process!!!\n$!\n";
-       exit(-1);
-     }
-     $childpid=$$;    
-     
-     if ($pid==0) {
-       #Child process
-       my $it;
-       my $irun;
-       my $sql;
-       
-       chomp($target_tablelist[$icalc]);
-       $sql = $target_tablelist[$icalc];
-       print "[SQL]=[$sql]\n";      
-       
-       my $tmp_result=`psql -A -X -t -c "$sql"` ;
-       $ret=$?;
-       
-       if ( $ret ){
-         print "Analyze error: ".$sql."\n".$tmp_result;
-       } 
-   
-       exit(0);
-     } else {                         
-       #Parent process
-       $num_proc++;
-       if ($num_finish%10 == 0) {
-         print "Child process count [".$num_proc."], finish count[".$num_finish."/".$itotal."]\n";
-       }
-       do {
-         sleep(1);
-       } until ( $num_proc < $concurrency );
-     }
-   }
-   
-   print "waiting for all child finished!\n";
-   do {
-     sleep(1);
-   } until($num_proc==0);
 
-   run_after_analyze($analyze_schema);
-   
-   return 0;
+sub main{
+  my $pid;
+  my $icalc;
+  my $itotal;
+  my $sql;
+  my $ret;
+  my @target_tablelist;
+  my $childpid;
+
+  
+  set_env();
+  my $analyze_schema = get_schema();
+  print $analyze_schema."\n";
+  ($ret,@target_tablelist) = get_tablelist($analyze_schema);
+  if ( $ret ) {
+     print "Get table list for analyze error!\n";
+     return -1;
+  }
+
+  $itotal=$#target_tablelist+1;
+  print "Total count [".$itotal."]\n";
+
+  for ($icalc=0; $icalc<$itotal;$icalc++){
+    
+    $pid=fork();
+    if(!(defined ($pid))) {
+      print "Can not fork a child process!!!\n$!\n";
+      exit(-1);
+    }
+    $childpid=$$;    
+    
+    if ($pid==0) {
+      #Child process
+      my $it;
+      my $irun;
+      my $sql;
+      
+      chomp($target_tablelist[$icalc]);
+      $sql = $target_tablelist[$icalc];
+      print "[SQL]=[$sql]\n";      
+      
+      my $tmp_result=`psql -A -X -t -c "$sql" 2>&1` ;
+      $ret=$?;
+      if ( $ret ){
+        print "Analyze error: ".$sql."\n".$tmp_result;
+      } 
+  
+      exit(0);
+    } else {                         
+      #Parent process
+      $num_proc++;
+      if ($num_finish%10 == 0) {
+        print "Child process count [".$num_proc."], finish count[".$num_finish."/".$itotal."]\n";
+      }
+      do {
+        sleep(1);
+      } until ( $num_proc < $concurrency );
+    }
+  }
+    
+  print "waiting for all child finished!\n";
+  my $ichd=0;
+  do {
+    while ( ($ichd=waitpid(-1, WNOHANG)) > 0 ) { $num_finish++; }
+    sleep(3);
+  } until ( $ichd < 0 );
+
+
+  run_after_analyze($analyze_schema);
+  
+  return 0;
 }
 
 
