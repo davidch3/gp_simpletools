@@ -3,7 +3,6 @@ use strict;
 use Time::Local;
 use File::Basename;
 use warnings;
-use Switch;
 use POSIX ":sys_wait_h";
 use POSIX;
 
