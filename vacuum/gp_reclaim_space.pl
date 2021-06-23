@@ -187,17 +187,26 @@ sub showTime
 sub checkWeekday
 {
   my ($sRunday) = @_;
+  if ( $sRunday eq "" ) {
+    return 1;
+  }
+  
+  my @tmpstr=split /,/,$sRunday;
   my $sDate=getCurrentDate();
   
   my($yyyy,$mm,$dd)=$sDate=~/^(\d{4})(\d{2})(\d{2})$/;
   my $epoch_seconds=timelocal(0,0,0,$dd,$mm-1,$yyyy);
-  my $weekDay= strftime("%u",localtime($epoch_seconds));
+  my $weekDay = strftime("%u",localtime($epoch_seconds));
   
-  if ( $sRunday =~ /$weekDay/ ) {
-    return(1);
-  } else {
-    return(0);
+  my $ret=0;
+  my $i;
+  for ($i=0;$i<=$#tmpstr;$i++) {
+    if ( $weekDay eq $tmpstr[$i] ) {
+      $ret=1;
+      last;
+    }
   }
+  return $ret;
 }
 
 sub checkCurrentDay
@@ -541,7 +550,7 @@ sub bloatcheck {
     
     if ($pid==0) {
       #Child process
-      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>0.95) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
+      $sql = qq{ copy (select schemaname||'.'||tablename,'ao',bloat from AOtable_bloatcheck('$schema_list[$icalc]') where bloat>1.9) to '/tmp/tmpaobloat.$schema_list[$icalc].dat'; };
       `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
       $ret = $? >> 8;
       if ($ret) {
