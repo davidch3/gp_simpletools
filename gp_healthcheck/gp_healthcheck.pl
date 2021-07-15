@@ -152,11 +152,21 @@ sub showTime
 
 sub initLog{
    my $logday=getCurrentDate();
-   my $logfile=open($fh_log, '>>', "$ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log");
-   unless ($logfile){
-     print "[ERROR]:Cound not open logfile $ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log\n";
-     exit -1;
+   my $logfile;
+   if ($LOG_DIR eq "~/gpAdminLogs") {
+     $logfile=open($fh_log, '>>', "$ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log");
+     unless ($logfile){
+       print "[ERROR]:Cound not open logfile $ENV{HOME}/gpAdminLogs/${cmd_name}_$logday.log\n";
+       exit -1;
+     }
+   } else {
+     $logfile=open($fh_log, '>>', "${LOG_DIR}/${cmd_name}_$logday.log");
+     unless ($logfile){
+       print "[ERROR]:Cound not open logfile ${LOG_DIR}/${cmd_name}_$logday.log\n";
+       exit -1;
+     }
    }
+   
 }
 
 sub info{
@@ -571,6 +581,17 @@ sub chk_catalog {
   info("---Subpartition info\n");
   info_notimestr("$subpart\n");  
   
+  ####Check pg_stat_operations of pg_class/pg_attribute
+  $sql = qq{select * from pg_stat_operations where objid in (1249,1259) order by objname,statime; };
+  my $stat_ops=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Check pg_stat_operations of pg_class/pg_attribute error! \n");
+    return(-1);
+  }
+  info("---Check pg_stat_operations info\n");
+  info_notimestr("$stat_ops\n");
+
 }
 
 
@@ -843,7 +864,7 @@ sub bloatcheck {
   $sql = qq{ drop table if exists pg_stats_bloat_chk;
              create temp table pg_stats_bloat_chk
              (
-               schemaname varchar(30),
+               schemaname varchar(80),
                tablename varchar(80),
                attname varchar(100),
                null_frac float4,
@@ -858,7 +879,7 @@ sub bloatcheck {
              create temp table pg_namespace_bloat_chk 
              (
                oid_ss integer,
-               nspname varchar(50),
+               nspname varchar(80),
                nspowner integer
              ) distributed by (oid_ss);
              

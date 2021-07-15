@@ -155,7 +155,7 @@ QUERY_HEAP_BLOAT_SQL = """
 drop table if exists pg_stats_bloat_chk;
 create temp table pg_stats_bloat_chk
 (
-  schemaname varchar(30),
+  schemaname varchar(80),
   tablename varchar(80),
   attname varchar(100),
   null_frac float4,
@@ -170,7 +170,7 @@ drop table if exists pg_namespace_bloat_chk;
 create temp table pg_namespace_bloat_chk 
 (
   oid_ss integer,
-  nspname varchar(50),
+  nspname varchar(80),
   nspowner integer
 ) distributed by (oid_ss);
 
@@ -572,6 +572,13 @@ def chk_catalog():
             raise CustomErr("Subpartition count error!")
         logger.info("---Subpartition info")
         gplog.log_literal(logger, logging.INFO, subpart)
+
+        sql = "select * from pg_stat_operations where objid in (1249,1259) order by objname,statime;"
+        rc, stat_ops = run_psql_return_header(sql)
+        if rc != 0:
+            raise CustomErr("Check pg_stat_operations of pg_class/pg_attribute error!")
+        logger.info("---Check pg_stat_operations info")
+        gplog.log_literal(logger, logging.INFO, stat_ops)
 
     except CustomErr, err:
         print >> sys.stderr, err.msg
