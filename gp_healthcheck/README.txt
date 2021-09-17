@@ -31,11 +31,11 @@ Even if skew=0, but data_segcount<sys_segcount, This table is skew.
 
 -------------------------
 gpsize:
-Installation:
 Preparation:
 Check if plpythonu is created: select * from pg_language;
 If not, please create language plpythonu: create language plpythonu;
  
+Installation:
 For GP4.3 and GP5:
 psql dbname -af ./gpsize/load_files_size.sql
 For GP6:
