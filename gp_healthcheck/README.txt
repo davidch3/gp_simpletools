@@ -13,7 +13,7 @@ Use this function to check bloat of AO table in the schema specified. (Not for h
 
 -------------------------
 skew:
-Installation: psql dbname -af skewcheck_func.sql
+Installation: psql dbname -af ./skew/skewcheck_func.sql
 
 Usage: Check table skew in each schema. example: select * from skewcheck_func('public');
 
@@ -30,7 +30,30 @@ Even if skew=0, but data_segcount<sys_segcount, This table is skew.
 
 
 -------------------------
-gp_healthcheck.pl
+gpsize:
+Installation:
+Preparation:
+Check if plpythonu is created: select * from pg_language;
+If not, please create language plpythonu: create language plpythonu;
+ 
+For GP4.3 and GP5:
+psql dbname -af ./gpsize/load_files_size.sql
+For GP6:
+psql dbname -af ./gpsize/load_files_size_v6.sql
+
+Information:
+This component is used to query all data files on all segment instances. Query result load into table public.gp_seg_size.
+Base on public.gp_seg_size, we can calculate schema size, table size, tablespace size, tablespace file numbers.
+But not recommend to calculate database size, because of public.gp_seg_size is not include data file size on master instance.
+
+Usage:
+truncate gp_seg_size_ora;
+truncate gp_seg_table_size;
+select gp_segment_id,public.load_files_size() from gp_dist_random('gp_id');
+
+
+-------------------------
+gp_healthcheck.pl / gp_healthcheck.py
 
 Usage:
   perl gp_healthcheck.pl [OPTIONS]

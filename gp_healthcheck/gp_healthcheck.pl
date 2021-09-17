@@ -406,14 +406,113 @@ sub db_size {
     error("Query db size error\n");
     return(-1);
   }
-  
   info("---Database size\n");
   info_notimestr("$dbsizeinfo\n\n");
+  
+  print "---Load data file size on all segments\n";
+  $sql = qq{ truncate gp_seg_size_ora; truncate gp_seg_table_size; };
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Truncate gp_seg_table_size error\n");
+    return(-1);
+  }
+  $sql = qq{ select gp_segment_id,load_files_size() from gp_dist_random('gp_id');};
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Load data file size on all segments error\n");
+    return(-1);
+  }
+  
+  print "---Check Schema size\n";
+  $sql = qq{ with foo as (select relnamespace,sum(size)::bigint as size from gp_seg_table_size group by 1) 
+             select a.nspname,pg_size_pretty(b.size)
+             from pg_namespace a,foo b 
+             where a.oid=b.relnamespace and a.nspname not like 'pg_temp%'
+             order by b.size desc;};
+  my $schemasizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query schema size error\n");
+    return(-1);
+  }
+  info("---Schema size\n");
+  info_notimestr("$schemasizeinfo\n\n");
+  
+  print "---Check Tablespace size\n";
+  $sql = qq{ select case when spcname is null then 'pg_default' else spcname end as tsname,
+                    pg_size_pretty(tssize)
+             from (
+               select c.spcname,sum(a.size)::bigint tssize
+               from gp_seg_table_size a
+               left join pg_tablespace c on a.reltablespace=c.oid
+               group by 1
+             ) foo
+             order by tsname;};
+  my $tssizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query Tablespace size error\n");
+    return(-1);
+  }
+  info("---Tablespace size\n");
+  info_notimestr("$tssizeinfo\n\n");
+  
+  print "---Check Tablespace filenum\n";
+  $sql = qq{ select tsname,segfilenum as max_segfilenum
+             from (
+               select case when spcname is null then 'pg_default' else spcname end as tsname,
+                      segfilenum,
+                      row_number() over(partition by spcname order by segfilenum desc) rn
+               from (
+                 select c.spcname,a.gp_segment_id segid,sum(relfilecount) segfilenum
+                 from gp_seg_table_size a
+                 left join pg_tablespace c on a.reltablespace=c.oid
+                 group by 1,2
+               ) foo
+             ) t1 where rn=1
+             order by tsname;};
+  my $tsfilenuminfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query Tablespace filenum error\n");
+    return(-1);
+  }
+  info("---Tablespace filenum\n");
+  info_notimestr("$tsfilenuminfo\n\n");
+  
+  print "---Check Large table top 50\n";
+  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c')
+             group by 1,2 order by sum(a.size) desc limit 50;};
+  my $aotableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query AO table error\n");
+    return(-1);
+  }
+  info("---AO Table top 50\n");
+  info_notimestr("$aotableinfo\n\n");
+  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage = 'h'
+             group by 1,2 order by sum(a.size) desc limit 50;};
+  my $heaptableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query Heap table error\n");
+    return(-1);
+  }
+  info("---Heap Table top 50\n");
+  info_notimestr("$heaptableinfo\n\n");
+  
 }
 
 
 sub chk_catalog {
   my ($sql,$ret);
+  my @tmpstr;
+  my $tmp_result;
   
   print "---Check pg_catalog\n";
   $sql = qq{select count(*) from pg_tables;};
@@ -434,15 +533,58 @@ sub chk_catalog {
   }
   chomp($view_count);
   
-  $sql = qq{select count(*) from pg_partition_rule;};
-  my $partition_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  ########pg_namespace
+  $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace'));};
+  my $pg_namespace_size=`psql -A -X -t -c "$sql"` ;
   $ret = $? >> 8;
   if ($ret) {
-    error("pg_partition_rule count error! \n");
+    print("pg_namespace size error! \n");
     return(-1);
   }
-  chomp($partition_count);
+  chomp($pg_namespace_size);
   
+  $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace')),pg_relation_size('pg_namespace');};
+  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql"` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_namespace master size error! \n");
+    return(-1);
+  }
+  chomp($tmp_result);
+  @tmpstr = split /\|/,$tmp_result;
+  my $pg_namespace_master = $tmpstr[0];
+  my $pg_namespace_master_int = $tmpstr[1];
+  
+  $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace')) from gp_dist_random('gp_id') where gp_segment_id=0;};
+  my $pg_namespace_gpseg0=`psql -A -X -t -c "$sql"` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_namespace gpseg0 size error! \n");
+    return(-1);
+  }
+  chomp($pg_namespace_gpseg0);
+  
+  $sql = qq{create temp table tmp_pg_namespace_record as select * from pg_namespace distributed randomly;
+            select pg_relation_size('tmp_pg_namespace_record');};
+  my $pg_namespace_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_namespace realsize error! \n");
+    return(-1);
+  }
+  chomp($pg_namespace_realsize);
+  my $pg_namespace_master_bloat = $pg_namespace_master_int / $pg_namespace_realsize;
+  
+  $sql = qq{select count(*) from pg_namespace;};
+  my $pg_namespace_count=`psql -A -X -t -c "$sql"` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_namespace count error! \n");
+    return(-1);
+  }
+  chomp($pg_namespace_count);
+
+  ########pg_class
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_class'));};
   my $pg_class_size=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
@@ -452,14 +594,17 @@ sub chk_catalog {
   }
   chomp($pg_class_size);
   
-  $sql = qq{select pg_size_pretty(pg_relation_size('pg_class'));};
-  my $pg_class_master=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $sql = qq{select pg_size_pretty(pg_relation_size('pg_class')),pg_relation_size('pg_class');};
+  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("pg_class master size error! \n");
     return(-1);
   }
-  chomp($pg_class_master);
+  chomp($tmp_result);
+  @tmpstr = split /\|/,$tmp_result;
+  my $pg_class_master = $tmpstr[0];
+  my $pg_class_master_int = $tmpstr[1];
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_class')) from gp_dist_random('gp_id') where gp_segment_id=0;};
   my $pg_class_gpseg0=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
@@ -470,6 +615,17 @@ sub chk_catalog {
   }
   chomp($pg_class_gpseg0);
   
+  $sql = qq{create temp table tmp_pg_class_record as select * from pg_class distributed randomly;
+            select pg_relation_size('tmp_pg_class_record');};
+  my $pg_class_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_class realsize error! \n");
+    return(-1);
+  }
+  chomp($pg_class_realsize);
+  my $pg_class_master_bloat = $pg_class_master_int / $pg_class_realsize;
+
   $sql = qq{select count(*) from pg_class;};
   my $pg_class_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
@@ -479,6 +635,7 @@ sub chk_catalog {
   }
   chomp($pg_class_count);
   
+  ########pg_attribute
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_attribute'));};
   my $pg_attribute_size=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
@@ -488,14 +645,17 @@ sub chk_catalog {
   }
   chomp($pg_attribute_size);
   
-  $sql = qq{select pg_size_pretty(pg_relation_size('pg_attribute'));};
-  my $pg_attribute_master=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $sql = qq{select pg_size_pretty(pg_relation_size('pg_attribute')),pg_relation_size('pg_attribute');};
+  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("pg_attribute master size error! \n");
     return(-1);
   }
-  chomp($pg_attribute_master);
+  chomp($tmp_result);
+  @tmpstr = split /\|/,$tmp_result;
+  my $pg_attribute_master = $tmpstr[0];
+  my $pg_attribute_master_int = $tmpstr[1];
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_attribute')) from gp_dist_random('gp_id') where gp_segment_id=0;};
   my $pg_attribute_gpseg0=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
@@ -506,6 +666,17 @@ sub chk_catalog {
   }
   chomp($pg_attribute_gpseg0);
   
+  $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute distributed randomly;
+            select pg_relation_size('tmp_pg_attribute_record');};
+  my $pg_attribute_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  $ret = $? >> 8;
+  if ($ret) {
+    print("pg_attribute realsize error! \n");
+    return(-1);
+  }
+  chomp($pg_attribute_realsize);
+  my $pg_attribute_master_bloat = $pg_attribute_master_int / $pg_attribute_realsize;
+
   $sql = qq{select count(*) from pg_attribute;};
   my $pg_attribute_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
@@ -515,18 +686,34 @@ sub chk_catalog {
   }
   chomp($pg_attribute_count);
   
+  $sql = qq{select count(*) from pg_partition_rule;};
+  my $partition_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("pg_partition_rule count error! \n");
+    return(-1);
+  }
+  chomp($partition_count);
+  
   info("---pg_catalog info\n");
-  info_notimestr("pg_tables count:              $table_count\n");
-  info_notimestr("pg_views count:               $view_count\n");
-  info_notimestr("pg_partition_rule count:      $partition_count\n");
-  info_notimestr("pg_class size:                $pg_class_size\n");
-  info_notimestr("pg_class size in master:      $pg_class_master\n");
-  info_notimestr("pg_class size in gpseg0:      $pg_class_gpseg0\n");
-  info_notimestr("pg_class count:               $pg_class_count\n");
-  info_notimestr("pg_attribute size:            $pg_attribute_size\n");
-  info_notimestr("pg_attribute size in master:  $pg_attribute_master\n");
-  info_notimestr("pg_attribute size in gpseg0:  $pg_attribute_gpseg0\n");
-  info_notimestr("pg_attribute count:           $pg_attribute_count\n");
+  info_notimestr("pg_tables count:               $table_count\n");
+  info_notimestr("pg_views count:                $view_count\n");
+  info_notimestr("pg_namespace count:            $pg_namespace_count\n");
+  info_notimestr("pg_namespace size:             $pg_namespace_size\n");
+  info_notimestr("pg_namespace size in master:   $pg_namespace_master\n");
+  info_notimestr("pg_namespace size in gpseg0:   $pg_namespace_gpseg0\n");
+  info_notimestr("pg_namespace bloat in master:  $pg_namespace_master_bloat\n");
+  info_notimestr("pg_class count:                $pg_class_count\n");
+  info_notimestr("pg_class size:                 $pg_class_size\n");
+  info_notimestr("pg_class size in master:       $pg_class_master\n");
+  info_notimestr("pg_class size in gpseg0:       $pg_class_gpseg0\n");
+  info_notimestr("pg_class bloat in master:      $pg_class_master_bloat\n");
+  info_notimestr("pg_attribute count:            $pg_attribute_count\n");
+  info_notimestr("pg_attribute size:             $pg_attribute_size\n");
+  info_notimestr("pg_attribute size in master:   $pg_attribute_master\n");
+  info_notimestr("pg_attribute size in gpseg0:   $pg_attribute_gpseg0\n");
+  info_notimestr("pg_attribute bloat in master:  $pg_attribute_master_bloat\n");
+  info_notimestr("pg_partition_rule count:       $partition_count\n");
   info_notimestr("\n");
   
   ####Query relstorage
@@ -752,7 +939,7 @@ sub skewcheck {
                    select tablename,string_agg(attname,',' order by attid) dk
                    from (
                      select nsp.nspname||'.'||rel.relname tablename,a.${tmp_attcolname}[attid] attnum,attid,att.attname
-                     from gp_distribution_policy a,
+                     from pg_catalog.gp_distribution_policy a,
                           generate_series(1,50) attid,
                           pg_attribute att,
                           pg_class rel,

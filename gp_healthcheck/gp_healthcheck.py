@@ -101,7 +101,7 @@ as
   select tablename,string_agg(attname,',' order by attid) dk
   from (
     select nsp.nspname||'.'||rel.relname tablename,a.{tmp_attcolname_param}[attid] attnum,attid,att.attname
-    from gp_distribution_policy a,
+    from pg_catalog.gp_distribution_policy a,
          generate_series(1,50) attid,
          pg_attribute att,
          pg_class rel,
@@ -400,7 +400,7 @@ def Gpstate():
 
 
 
-def Gpcusterinfo():
+def Gpclusterinfo():
     logger.info("---Check GP cluster info")
     try:
         ###export tmp hostfile
@@ -452,16 +452,81 @@ def disk_space():
 
 
 def db_size():
-    logger.info("---Check database size")
+    logger.info("---Check size")
     try:
+        logger.info("---Check database size")
         sql = "select datname,pg_size_pretty(pg_database_size(oid)) from pg_database where datname not in ('postgres','template1','template0');"
         rc, dbsizeinfo = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("Query db size error")
         gplog.log_literal(logger, logging.INFO, dbsizeinfo)
+
+        logger.info("---Load data file size on all segments")
+        sql = "truncate gp_seg_size_ora; truncate gp_seg_table_size;"
+        rc, res = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Truncate gp_seg_table_size error")
+        sql = "select gp_segment_id,load_files_size() from gp_dist_random('gp_id');"
+        rc, res = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Load data file size on all segments error")
+
+        logger.info("---Check Schema size")
+        sql = "with foo as (select relnamespace,sum(size)::bigint as size from gp_seg_table_size group by 1) "\
+              "select a.nspname,pg_size_pretty(b.size) from pg_namespace a,foo b " \
+              "where a.oid=b.relnamespace and a.nspname not like 'pg_temp%' " \
+              "order by b.size desc; "
+        rc, schemasize = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Query schema size error")
+        gplog.log_literal(logger, logging.INFO, schemasize)
+
+        logger.info("---Check Tablespace size")
+        sql = "select case when spcname is null then 'pg_default' else spcname end as tsname,pg_size_pretty(tssize) " \
+              "from ( " \
+              "  select c.spcname,sum(a.size)::bigint tssize from gp_seg_table_size a " \
+              "  left join pg_tablespace c on a.reltablespace=c.oid group by 1 " \
+              ") foo order by tsname; "
+        rc, tssize = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Query tablespace size error")
+        gplog.log_literal(logger, logging.INFO, tssize)
+
+        logger.info("---Check Tablespace filenum")
+        sql = "select tsname,segfilenum as max_segfilenum from ( " \
+              "  select case when spcname is null then 'pg_default' else spcname end as tsname, segfilenum, " \
+              "         row_number() over(partition by spcname order by segfilenum desc) rn " \
+              "  from (" \
+              "    select c.spcname,a.gp_segment_id segid,sum(relfilecount) segfilenum " \
+              "    from gp_seg_table_size a left join pg_tablespace c on a.reltablespace=c.oid " \
+              "    group by 1,2 " \
+              "  ) foo " \
+              ") t1 where rn=1 order by tsname;"
+        rc, tsfilenum = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Query tablespace filenum error")
+        gplog.log_literal(logger, logging.INFO, tsfilenum)
+
+        logger.info("---AO Table top 50")
+        sql = "select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size " \
+              "from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c') " \
+              "group by 1,2 order by sum(a.size) desc limit 50;"
+        rc, aotableinfo = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Query AO table size error")
+        gplog.log_literal(logger, logging.INFO, aotableinfo)
+
+        logger.info("---Heap Table top 50")
+        sql = "select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size " \
+              "from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage = 'h' " \
+              "group by 1,2 order by sum(a.size) desc limit 50;"
+        rc, heaptableinfo = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("Query heap table size error")
+        gplog.log_literal(logger, logging.INFO, heaptableinfo)
     except CustomErr, err:
         print >> sys.stderr, err.msg
-        return (2)
+        return(2)
 
 
 def chk_catalog():
@@ -472,51 +537,121 @@ def chk_catalog():
         if rc != 0:
             raise CustomErr("pg_tables count error!")
         table_count= table_count.rstrip()
+
         sql = "select count(*) from pg_views;"
         rc, view_count = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_views count error!")
         view_count = view_count.rstrip()
+
         sql = "select count(*) from pg_partition_rule;"
         rc, partition_count = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_partition_rule count error!")
         partition_count = partition_count.rstrip()
+
+        ###pg_namespace
+        sql = "select pg_size_pretty(pg_relation_size('pg_namespace'));"
+        rc, pg_namespace_size = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_namespace size error!")
+        pg_namespace_size = pg_namespace_size.rstrip()
+
+        sql = "select pg_size_pretty(pg_relation_size('pg_namespace')),pg_relation_size('pg_namespace');"
+        rc, tmp_result = run_PGOPTIONS_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_namespace master size error!")
+        tmp_result = tmp_result.rstrip()
+        tmplist = tmp_result.split("|")
+        pg_namespace_master = tmplist[0]
+        pg_namespace_master_int = tmplist[1]
+
+        sql = "select pg_size_pretty(pg_relation_size('pg_namespace')) from gp_dist_random('gp_id') where gp_segment_id=0;"
+        rc, pg_namespace_gpseg0 = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_namespace gpseg0 size error!")
+        pg_namespace_gpseg0 = pg_namespace_gpseg0.rstrip()
+
+        sql = "create temp table tmp_pg_namespace_record as select * from pg_namespace distributed randomly; "\
+              "select pg_relation_size('tmp_pg_namespace_record'); "
+        rc, pg_namespace_realsize = run_PGOPTIONS_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_namespace real size error!")
+        pg_namespace_realsize = pg_namespace_realsize.rstrip()
+        pg_namespace_master_bloat = float(pg_namespace_master_int) / float(pg_namespace_realsize)
+
+        sql = "select count(*) from pg_namespace;"
+        rc, pg_namespace_count = run_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_namespace count error!")
+        pg_namespace_count = pg_namespace_count.rstrip()
+
+        ###pg_class
         sql = "select pg_size_pretty(pg_relation_size('pg_class'));"
         rc, pg_class_size = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_class size error!")
         pg_class_size = pg_class_size.rstrip()
-        sql = "select pg_size_pretty(pg_relation_size('pg_class'));"
-        rc, pg_class_master = run_PGOPTIONS_psql_command(sql)
+
+        sql = "select pg_size_pretty(pg_relation_size('pg_class')),pg_relation_size('pg_class');"
+        rc, tmp_result = run_PGOPTIONS_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_class master size error!")
-        pg_class_master = pg_class_master.rstrip()
+        tmp_result = tmp_result.rstrip()
+        tmplist = tmp_result.split("|")
+        pg_class_master = tmplist[0]
+        pg_class_master_int = tmplist[1]
+
         sql = "select pg_size_pretty(pg_relation_size('pg_class')) from gp_dist_random('gp_id') where gp_segment_id=0;"
         rc, pg_class_gpseg0 = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_class gpseg0 size error!")
         pg_class_gpseg0 = pg_class_gpseg0.rstrip()
+
+        sql = "create temp table tmp_pg_class_record as select * from pg_class distributed randomly; "\
+              "select pg_relation_size('tmp_pg_class_record'); "
+        rc, pg_class_realsize = run_PGOPTIONS_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_class real size error!")
+        pg_class_realsize = pg_class_realsize.rstrip()
+        pg_class_master_bloat = float(pg_class_master_int) / float(pg_class_realsize)
+
         sql = "select count(*) from pg_class;"
         rc, pg_class_count = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_class count error!")
         pg_class_count = pg_class_count.rstrip()
+
+        ###pg_attribute
         sql = "select pg_size_pretty(pg_relation_size('pg_attribute'));"
         rc, pg_attribute_size = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_attribute size error!")
         pg_attribute_size = pg_attribute_size.rstrip()
-        sql = "select pg_size_pretty(pg_relation_size('pg_attribute'));"
-        rc, pg_attribute_master = run_PGOPTIONS_psql_command(sql)
+
+        sql = "select pg_size_pretty(pg_relation_size('pg_attribute')),pg_relation_size('pg_attribute');"
+        rc, tmp_result = run_PGOPTIONS_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_attribute master size error!")
-        pg_attribute_master = pg_attribute_master.rstrip()
+        tmp_result = tmp_result.rstrip()
+        tmplist = tmp_result.split("|")
+        pg_attribute_master = tmplist[0]
+        pg_attribute_master_int = tmplist[1]
+
         sql = "select pg_size_pretty(pg_relation_size('pg_attribute')) from gp_dist_random('gp_id') where gp_segment_id=0;"
         rc, pg_attribute_gpseg0 = run_psql_command(sql)
         if rc != 0:
             raise CustomErr("pg_attribute gpseg0 size error!")
         pg_attribute_gpseg0 = pg_attribute_gpseg0.rstrip()
+
+        sql = "create temp table tmp_pg_attribute_record as select * from pg_attribute distributed randomly; " \
+              "select pg_relation_size('tmp_pg_attribute_record'); "
+        rc, pg_attribute_realsize = run_PGOPTIONS_psql_command(sql)
+        if rc != 0:
+            raise CustomErr("pg_attribute real size error!")
+        pg_attribute_realsize = pg_attribute_realsize.rstrip()
+        pg_attribute_master_bloat = float(pg_attribute_master_int) / float(pg_attribute_realsize)
+
         sql = "select count(*) from pg_attribute;"
         rc, pg_attribute_count = run_psql_command(sql)
         if rc != 0:
@@ -524,17 +659,24 @@ def chk_catalog():
         pg_attribute_count = pg_attribute_count.rstrip()
 
         logger.info("---pg_catalog info")
-        gplog.log_literal(logger, logging.INFO, "pg_tables count:              %s" % table_count)
-        gplog.log_literal(logger, logging.INFO, "pg_views count:               %s" % view_count)
-        gplog.log_literal(logger, logging.INFO, "pg_partition_rule count:      %s" % partition_count)
-        gplog.log_literal(logger, logging.INFO, "pg_class size:                %s" % pg_class_size)
-        gplog.log_literal(logger, logging.INFO, "pg_class size in master:      %s" % pg_class_master)
-        gplog.log_literal(logger, logging.INFO, "pg_class size in gpseg0:      %s" % pg_class_gpseg0)
-        gplog.log_literal(logger, logging.INFO, "pg_class count:               %s" % pg_class_count)
-        gplog.log_literal(logger, logging.INFO, "pg_attribute size:            %s" % pg_attribute_size)
-        gplog.log_literal(logger, logging.INFO, "pg_attribute size in master:  %s" % pg_attribute_master)
-        gplog.log_literal(logger, logging.INFO, "pg_attribute size in gpseg0:  %s" % pg_attribute_gpseg0)
-        gplog.log_literal(logger, logging.INFO, "pg_attribute count:           %s" % pg_attribute_count)
+        gplog.log_literal(logger, logging.INFO, "pg_tables count:               %s" % table_count)
+        gplog.log_literal(logger, logging.INFO, "pg_views count:                %s" % view_count)
+        gplog.log_literal(logger, logging.INFO, "pg_namespace count:            %s" % pg_namespace_count)
+        gplog.log_literal(logger, logging.INFO, "pg_namespace size:             %s" % pg_namespace_size)
+        gplog.log_literal(logger, logging.INFO, "pg_namespace size in master:   %s" % pg_namespace_master)
+        gplog.log_literal(logger, logging.INFO, "pg_namespace size in gpseg0:   %s" % pg_namespace_gpseg0)
+        gplog.log_literal(logger, logging.INFO, "pg_namespace bloat in master:  %.2f" % pg_namespace_master_bloat)
+        gplog.log_literal(logger, logging.INFO, "pg_class count:                %s" % pg_class_count)
+        gplog.log_literal(logger, logging.INFO, "pg_class size:                 %s" % pg_class_size)
+        gplog.log_literal(logger, logging.INFO, "pg_class size in master:       %s" % pg_class_master)
+        gplog.log_literal(logger, logging.INFO, "pg_class size in gpseg0:       %s" % pg_class_gpseg0)
+        gplog.log_literal(logger, logging.INFO, "pg_class bloat in master:      %.2f" % pg_class_master_bloat)
+        gplog.log_literal(logger, logging.INFO, "pg_attribute count:            %s" % pg_attribute_count)
+        gplog.log_literal(logger, logging.INFO, "pg_attribute size:             %s" % pg_attribute_size)
+        gplog.log_literal(logger, logging.INFO, "pg_attribute size in master:   %s" % pg_attribute_master)
+        gplog.log_literal(logger, logging.INFO, "pg_attribute size in gpseg0:   %s" % pg_attribute_gpseg0)
+        gplog.log_literal(logger, logging.INFO, "pg_attribute bloat in master:  %.2f" % pg_attribute_master_bloat)
+        gplog.log_literal(logger, logging.INFO, "pg_partition_rule count:       %s" % partition_count)
         gplog.log_literal(logger, logging.INFO, "\n")
 
         sql = "select a.nspname schemaname," \
@@ -893,7 +1035,7 @@ def main(argv=None):
     print(schemastr)
 
     Gpstate()
-    Gpcusterinfo()
+    Gpclusterinfo()
     disk_space()
     db_size()
     chk_catalog()

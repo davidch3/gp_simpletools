@@ -53,7 +53,7 @@ BEGIN
     select tablename,string_agg(attname,',' order by attid) dk
     from (
       select nsp.nspname||'.'||rel.relname tablename,a.attrnums[attid] attnum,attid,att.attname
-      from gp_distribution_policy a,
+      from pg_catalog.gp_distribution_policy a,
            generate_series(1,50) attid,
            pg_attribute att,
            pg_class rel,
