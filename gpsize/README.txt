@@ -23,5 +23,16 @@ select gp_segment_id,public.load_files_size() from gp_dist_random('gp_id');
 
 
 
+-------------------
+Calculate partition table size function:  public.gp_partitiontable_size(tablename text)
+Can not use on none partition table.
+
+Installation:
+psql dbname -af gp_partitiontable_size.sql
+
+Sample:
+select gp_partitiontable_size('schemaname.tablename');
+
+
 
 
