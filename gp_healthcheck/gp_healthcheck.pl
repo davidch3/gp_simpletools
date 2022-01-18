@@ -449,7 +449,7 @@ sub db_size {
                left join pg_tablespace c on a.reltablespace=c.oid
                group by 1
              ) foo
-             order by tsname;};
+             order by tssize desc;};
   my $tssizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -472,7 +472,7 @@ sub db_size {
                  group by 1,2
                ) foo
              ) t1 where rn=1
-             order by tsname;};
+             order by max_segfilenum desc;};
   my $tsfilenuminfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -506,6 +506,35 @@ sub db_size {
   info("---Heap Table top 50\n");
   info_notimestr("$heaptableinfo\n\n");
   
+  $sql = qq{ select
+             case when position('_1_prt_' in b.nspname||'.'||a.relname)>0 then substr(b.nspname||'.'||a.relname,1,position('_1_prt_' in b.nspname||'.'||a.relname)-1)
+             else b.nspname||'.'||a.relname end as tablename,
+             c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h')
+             group by 1,2 order by sum(a.size) desc limit 100;};
+  my $parttableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query partition table size error\n");
+    return(-1);
+  }
+  info("---Partition Table Size top 100\n");
+  info_notimestr("$parttableinfo\n\n");
+
+  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+             from gp_seg_table_size a,pg_namespace b,pg_class c 
+             where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h')
+             and b.nspname like 'pg_temp%'
+             group by 1,2 order by sum(a.size) desc limit 50;};
+  my $temptableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query temp table size error\n");
+    return(-1);
+  }
+  info("---Temp Table Size top 50\n");
+  info_notimestr("$temptableinfo\n\n");
+
 }
 
 
