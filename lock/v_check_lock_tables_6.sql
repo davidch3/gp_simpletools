@@ -4,23 +4,23 @@
 drop view if exists v_check_lock_tables;
 create or replace view v_check_lock_tables
 as
-select tab1.tablename lock_table,tab1.lockmode wait_lockmode,tab1.usename wait_user,tab1.pid wait_procpid,tab1.query_start wait_start,
+select tab1.tablename lock_table,tab1.lockmode wait_lockmode,tab1.usename wait_user,tab1.pid wait_procpid,tab1.xact_start wait_start,
        tab1.wait_time,tab1.current_query wait_sql,tab2.lockmode run_lockmode,tab2.usename run_user,tab2.pid run_procpid,
-       tab2.query_start run_start,tab2.run_time,tab2.current_query run_sql,tab2.state run_state
+       tab2.xact_start xact_start,tab2.xact_time,tab2.current_query run_sql,tab2.state run_state
 from (
-select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename,bbb.query_start,substr(bbb.query,1,100) as current_query,
-       now()-bbb.query_start as wait_time
+select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename,bbb.xact_start,substr(bbb.query,1,100) as current_query,
+       now()-bbb.xact_start as wait_time
 from pg_locks aaa
 inner join pg_stat_activity bbb on aaa.pid=bbb.pid
 where aaa.granted=false and aaa.relation>30000 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
 and aaa.mode<>'ShareLock' and bbb.waiting=true
 ) tab1
 inner join (
-select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename,bbb.query_start,substr(bbb.query,1,100) as current_query,bbb.state,
-       now()-bbb.query_start as run_time
+select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename,bbb.xact_start,substr(bbb.query,1,100) as current_query,bbb.state,
+       now()-bbb.xact_start as xact_time
 from pg_locks aaa
 inner join pg_stat_activity bbb on aaa.pid=bbb.pid
 where aaa.granted=true and aaa.relation>30000 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
 and aaa.mode<>'ShareLock'
-) tab2 on tab1.tablename=tab2.tablename;
+) tab2 on tab1.tablename=tab2.tablename and tab1.wait_time<tab2.xact_time;
 
