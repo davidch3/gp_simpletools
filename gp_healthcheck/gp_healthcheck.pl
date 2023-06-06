@@ -507,10 +507,10 @@ sub db_size {
   info_notimestr("$heaptableinfo\n\n");
   
   $sql = qq{ select
-             case when position('_1_prt_' in b.nspname||'.'||a.relname)>0 then substr(b.nspname||'.'||a.relname,1,position('_1_prt_' in b.nspname||'.'||a.relname)-1)
-             else b.nspname||'.'||a.relname end as tablename,
+             substr(b.nspname||'.'||a.relname,1,position('_1_prt_' in b.nspname||'.'||a.relname)-1) as tablename,
              c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
-             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h')
+             from gp_seg_table_size a,pg_namespace b,pg_class c 
+             where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h') and position('_1_prt_' in a.relname)>0
              group by 1,2 order by sum(a.size) desc limit 100;};
   my $parttableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
@@ -865,7 +865,7 @@ sub chk_activity {
   
   if ($gpver >= 6) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where state<>'idle' and now()-query_start>interval '1 day'
+               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
              };
   } else {
     $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
@@ -969,7 +969,7 @@ sub skewcheck {
                    from (
                      select nsp.nspname||'.'||rel.relname tablename,a.${tmp_attcolname}[attid] attnum,attid,att.attname
                      from pg_catalog.gp_distribution_policy a,
-                          generate_series(1,50) attid,
+                          generate_series(0,50) attid,
                           pg_attribute att,
                           pg_class rel,
                           pg_namespace nsp
