@@ -6,11 +6,10 @@ use POSIX;
 
 my $cmd_name=$0;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","postgres","gpadmin","gpadmin");    ###default
-my ($IS_HELP,$IS_ALL,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$GLOBAL_ONLY);
+my ($IS_HELP,$IS_ALL,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$GLOBAL_ONLY,$DB_ONLY);
 my $fh_log;
 my @schema_list;
 my $schema_str;
-my $seg_count;
 my $gpver;
 
 my $HELP_MESSAGE = qq{
@@ -53,6 +52,9 @@ Options:
   
   --global-info-only
     Check and output the global information of GPDB, skip check: skew, bloat, default partition
+  
+  --check-db-only
+    Check information in DB specified, Skip global information of GP cluster.
 
 Examples:
   perl $cmd_name --dbname testdb --all --jobs 3
@@ -90,6 +92,7 @@ sub getOption{
       'jobs:s'                => \$concurrency,
       'log-dir:s'             => \$LOG_DIR,
       'global-info-only!'     => \$GLOBAL_ONLY,
+      'check-db-only!'        => \$DB_ONLY,
   );
   if(@ARGV != 0){
     print "Input error: [@ARGV]\nPlease show help: perl $cmd_name --help\n";
@@ -115,7 +118,13 @@ sub getOption{
     print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2\n";
     exit 0;
   }
-
+  $itmp=0;
+  if ($GLOBAL_ONLY) { $itmp++; }
+  if ($DB_ONLY) { $itmp++; }
+  if ( $itmp>1 ) {
+    print "Input error: The following options may not be specified together: global-info-only, check-db-only\n";
+    exit 0;
+  }
   #print $hostname."\n".$port."\n".$database."\n".$username."\n".$password."\n".$IS_HELP."\n".$IS_ALL."\n".$#CHK_SCHEMA."\n".$SCHEMA_FILE."\n".$concurrency."\n".$LOG_DIR."\n";
   
 }
@@ -300,6 +309,7 @@ sub get_schema{
     elsif ($i == $#schema_list) { $schema_str = $schema_str."\'".$schema_list[$i]."\')"; }
   }
   print "SCHEMA: $schema_str\n";
+  info_notimestr("SCHEMA: $schema_str\n");
   
 }
 
@@ -371,7 +381,6 @@ sub Gpcusterinfo {
     return(-1);
   }
   chomp($segcount);
-  $seg_count = $segcount;
   
   info("---GP Cluster info\n");
   info_notimestr("Segment hosts: $hostcount\nPrimary segment instances: $segcount\n\n");
@@ -408,7 +417,11 @@ sub db_size {
   }
   info("---Database size\n");
   info_notimestr("$dbsizeinfo\n\n");
-  
+}
+
+sub object_size {
+	my ($sql,$ret);
+	
   print "---Load data file size on all segments\n";
   $sql = qq{ truncate gp_seg_size_ora; truncate gp_seg_table_size; };
   `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
@@ -534,6 +547,18 @@ sub db_size {
   }
   info("---Temp Table Size top 50\n");
   info_notimestr("$temptableinfo\n\n");
+
+  $sql = qq{ select schemaname||'.'||tablename tablename,pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) table_size,
+             schemaname||'.'||indexname indexname,pg_size_pretty(pg_relation_size(schemaname||'.'||indexname)) index_size
+             from pg_indexes order by pg_relation_size(schemaname||'.'||indexname) desc limit 50;};
+  my $indexinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query index size error\n");
+    return(-1);
+  }
+  info("---Index Size top 50\n");
+  info_notimestr("$indexinfo\n\n");
 
 }
 
@@ -784,19 +809,6 @@ sub chk_catalog {
   info("---Table type info\n");
   info_notimestr("$tabletype\n");  
   
-  #####Query subpartition count
-  $sql = qq{select schemaname||'.'||tablename as tablename,count(*) as sub_count from pg_partitions
-            group by 1 order by 2 desc limit 100;
-           };
-  my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Subpartition count error! \n");
-    return(-1);
-  }
-  info("---Subpartition info\n");
-  info_notimestr("$subpart\n");  
-  
   ####Check pg_stat_operations of pg_class/pg_attribute
   $sql = qq{select * from pg_stat_operations where objid in (1249,1259) order by objname,statime; };
   my $stat_ops=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
@@ -883,6 +895,36 @@ sub chk_activity {
   
 }
 
+sub chk_partition_info {
+  my ($sql,$ret);
+
+  #####Query subpartition count
+  $sql = qq{select schemaname||'.'||tablename as tablename,count(*) as sub_count from pg_partitions
+            group by 1 order by 2 desc limit 100;
+           };
+  my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Subpartition count error! \n");
+    return(-1);
+  }
+  info("---Subpartition info\n");
+  info_notimestr("$subpart\n");  
+  
+  #####Check partition schema
+  $sql = qq{select schemaname||'.'||tablename as tablename,partitionschemaname||'.'||partitiontablename as partitiontablename
+            from pg_partitions where schemaname<>partitionschemaname order by 1,2;
+           };
+  my $part_schema=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Check partition schema error! \n");
+    return(-1);
+  }
+  info("---Check partition schema\n");
+  info_notimestr("$part_schema\n");  
+
+}
 
 
 sub skewcheck {
@@ -909,6 +951,14 @@ sub skewcheck {
     error("recreate check_skew_result error! \n");
     return(-1);
   }
+  $sql = qq{ select count(*) from gp_segment_configuration where content>-1 and preferred_role='p'; };
+  my $seg_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Get segment instance count error\n");
+    return(-1);
+  }
+  chomp($seg_count);
   
   $num_proc = 0;
   $num_finish = 0;
@@ -1367,18 +1417,22 @@ sub main{
   info("-----------------------------------------------------\n");
   info("------Begin GPDB health check\n");
   info("-----------------------------------------------------\n");
+  info_notimestr("Hostname: $hostname\nPort: $port\nDatabase: $database\nUsername: $username\nConcurrency: $concurrency\nLogDIR: $LOG_DIR\n");
   $gpver=get_gpver();
-  
-  ########
   get_schema();
+  info("-----------------------------------------------------\n");
   
-  Gpstate();
-  Gpcusterinfo();
-  disk_space();
-  db_size();
+  if ( !$DB_ONLY ) {
+    Gpstate();
+    Gpcusterinfo();
+    disk_space();
+    db_size();
+  }
+  object_size();
   chk_catalog();
   chk_age();
   chk_activity();
+  chk_partition_info();
   
   if ( !$GLOBAL_ONLY ) {
     skewcheck();
@@ -1390,7 +1444,7 @@ sub main{
   
   info("-----------------------------------------------------\n");
   info("------Finish GPDB health check!\n");
-  info("-----------------------------------------------------\n");
+  info("-----------------------------------------------------\n\n\n");
   closeLog();
 }
 
