@@ -3,8 +3,9 @@ use strict;
 use Getopt::Long;
 use POSIX ":sys_wait_h";
 use POSIX;
+use FindBin qw($Bin $Script);
 
-my $cmd_name=$0;
+my $cmd_name=$Script;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","postgres","gpadmin","gpadmin");    ###default
 my ($IS_HELP,$IS_ALL,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$GLOBAL_ONLY,$DB_ONLY);
 my $fh_log;
