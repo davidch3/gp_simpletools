@@ -4,8 +4,9 @@ use Time::Local;
 use Getopt::Long;
 use POSIX ":sys_wait_h";
 use POSIX;
+use FindBin qw($Bin $Script);
 
-my $cmd_name;
+my $cmd_name=$Script;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","postgres","gpadmin","gpadmin");    ###default
 my ($IS_HELP,$IS_ALL,$CHK_SCHEMA,$SCHEMA_FILE,$EXCLUDE_SCHEMA,$EXCLUDE_SCHEMA_FILE,$concurrency,$WEEK_DAYS,$EXCLUDE_DATE,$DURATION);
 my @schema_list;
@@ -77,17 +78,8 @@ Examples:
   
 };
 
-sub get_cmd_name{
-  my ($inname)=@_;
-  my @tmpstr;
-  @tmpstr = split /\//,$inname;
-  return $tmpstr[$#tmpstr];
-}
-
 
 sub getOption{
-  my $full_name=$0;
-  $cmd_name = get_cmd_name($full_name);
   
   if($#ARGV == -1){
     print "Input error: \nPlease show help: perl $cmd_name --help\n";
