@@ -112,19 +112,19 @@ sub main{
 	`gpssh -f ~/allmasters "find ${master_data_directory}/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec gzip -f {} \\;"`;
 
 	info("------Segment pg_log rm list------\n");
-	$rmlist = `gpssh -f ~/allsegs "find /data*/primary5/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec ls -l {} \\;"`;
+	$rmlist = `gpssh -f ~/allsegs "find /data*/primary/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec ls -l {} \\;"`;
 	info("$rmlist");
-	`gpssh -f ~/allsegs "find /data*/primary5/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec rm -f {} \\;"`;
-	$rmlist = `gpssh -f ~/allsegs "find /data*/mirror5/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec ls -l {} \\;"`;
+	`gpssh -f ~/allsegs "find /data*/primary/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec rm -f {} \\;"`;
+	$rmlist = `gpssh -f ~/allsegs "find /data*/mirror/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec ls -l {} \\;"`;
 	info("$rmlist");
-	`gpssh -f ~/allsegs "find /data*/mirror5/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec rm -f {} \\;"`;
+	`gpssh -f ~/allsegs "find /data*/mirror/gpseg*/pg_log -mtime +${RM_INVERVAL} -name '*.csv*' -exec rm -f {} \\;"`;
 	info("------Segment pg_log gzip list------\n");
-	$gziplist = `gpssh -f ~/allsegs "find /data*/primary5/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec ls -l {} \\;"`;
+	$gziplist = `gpssh -f ~/allsegs "find /data*/primary/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec ls -l {} \\;"`;
 	info("$gziplist");
-	`gpssh -f ~/allsegs "find /data*/primary5/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec gzip -f {} \\;"`;
-	$gziplist = `gpssh -f ~/allsegs "find /data*/mirror5/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec ls -l {} \\;"`;
+	`gpssh -f ~/allsegs "find /data*/primary/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec gzip -f {} \\;"`;
+	$gziplist = `gpssh -f ~/allsegs "find /data*/mirror/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec ls -l {} \\;"`;
 	info("$gziplist");
-	`gpssh -f ~/allsegs "find /data*/mirror5/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec gzip -f {} \\;"`;
+	`gpssh -f ~/allsegs "find /data*/mirror/gpseg*/pg_log -mtime +${GZIP_INVERVAL} -name '*.csv' -exec gzip -f {} \\;"`;
 
   close $fh_log;
 
