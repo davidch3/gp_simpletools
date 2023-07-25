@@ -416,7 +416,7 @@ sub bloatcheck {
                    bs*relpages::bigint AS total_size_pages,
                    ROUND (
                        CASE
-                           WHEN live_size_blocks =  0 THEN 0.0
+                           WHEN live_size_blocks = 0 AND relpages > 0 THEN 1000.0
                            ELSE sml.relpages/live_size_blocks::numeric
                        END, 
                        1
