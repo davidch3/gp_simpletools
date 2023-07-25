@@ -1173,7 +1173,7 @@ sub bloatcheck {
                    bs*relpages::bigint AS total_size_pages,
                    ROUND (
                        CASE
-                           WHEN live_size_blocks =  0 THEN 0.0
+                           WHEN live_size_blocks = 0 AND relpages > 0 THEN 1000.0
                            ELSE sml.relpages/live_size_blocks::numeric
                        END, 
                        1
@@ -1236,7 +1236,7 @@ sub bloatcheck {
                    JOIN pg_namespace_bloat_chk nn ON cc.relnamespace = nn.oid_ss AND nn.nspname = rs.schemaname AND nn.nspname <> 'information_schema'
                ) AS sml
                WHERE sml.relpages - live_size_blocks > 2
-             ) AS blochk where wastedsize>1073741824 and bloat>2;
+             ) AS blochk where wastedsize>104857600 and bloat>2;
            };
   $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
   $ret = $? >> 8;
