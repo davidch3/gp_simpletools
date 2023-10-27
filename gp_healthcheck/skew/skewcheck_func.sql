@@ -2,17 +2,35 @@ CREATE TYPE type_skew_resultset as (tablename text,sys_segcount int,data_segcoun
 
 
 
-
+----s_schema format: 'schema1,schema2,schema3'
 CREATE OR REPLACE FUNCTION skewcheck_func(s_schema text)
        RETURNS SETOF type_skew_resultset AS
 $$
 declare
   v_record type_skew_resultset%rowtype;
   i_sys_segcount int;
+  schema_array text[];
+  v_schemastr text;
+  i int;
+  v_sql text;
   
 BEGIN
-  --select * from skewcheck_func('public');
-  
+  --select * from skewcheck_func('public,dw,ods');
+  schema_array := string_to_array(s_schema,',');
+  --raise info '%,%',array_lower(schema_array,1),array_upper(schema_array,1);
+  v_schemastr := '(';
+  i := 1;
+  while i <= array_upper(schema_array,1) loop
+    --raise info '%',schema_array[i];
+    if i<array_upper(schema_array,1) then 
+      v_schemastr := v_schemastr || '''' || schema_array[i] || ''',';
+    else
+      v_schemastr := v_schemastr || '''' || schema_array[i] || ''')';
+    end if;
+    i := i+1;
+  end loop;
+  raise info '%',v_schemastr;
+    
   select count(*) into i_sys_segcount from gp_segment_configuration where content>-1 and role='p';
   
   drop table if exists skewresult_new2;
@@ -22,17 +40,19 @@ BEGIN
     segid int,
     cnt bigint
   ) distributed randomly;
-  insert into skewresult_new2 
-  select case when position('_1_prt_' in nsp.nspname||'.'||rel.relname)>0 then
-           substr(nsp.nspname||'.'||rel.relname,1,position('_1_prt_' in nsp.nspname||'.'||rel.relname)-1)
-         else nsp.nspname||'.'||rel.relname
+  
+  v_sql := 'insert into skewresult_new2 
+  select case when position(''_1_prt_'' in nsp.nspname||''.''||rel.relname)>0 then
+           substr(nsp.nspname||''.''||rel.relname,1,position(''_1_prt_'' in nsp.nspname||''.''||rel.relname)-1)
+         else nsp.nspname||''.''||rel.relname
          end
-         ,nsp.nspname||'.'||rel.relname
+         ,nsp.nspname||''.''||rel.relname
          ,rel.gp_segment_id
-         ,pg_relation_size(nsp.nspname||'.'||rel.relname) 
-  from gp_dist_random('pg_class') rel, pg_namespace nsp
-  where nsp.oid=rel.relnamespace and rel.relkind='r' and relstorage!='x' 
-        and nsp.nspname=s_schema;
+         ,pg_relation_size(nsp.nspname||''.''||rel.relname) 
+  from gp_dist_random(''pg_class'') rel, pg_namespace nsp
+  where nsp.oid=rel.relnamespace and rel.relkind=''r'' and relstorage!=''x'' 
+        and nsp.nspname in '||v_schemastr;
+  execute v_sql;
   
   drop table if exists skewresult_tmp;
   create temp table skewresult_tmp (
