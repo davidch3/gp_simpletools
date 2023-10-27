@@ -1,4 +1,10 @@
-Installation: psql dbname -af skewcheck_func.sql
+Installation: 
+For GP4.3 and GP5:
+psql dbname -af ./skew/skewcheck_func.sql
+For GP6:
+psql dbname -af ./skew/skewcheck_func_gp6.sql
+For GP7:
+psql dbname -af ./skew/skewcheck_func_gp7.sql
 
 Usage: Check table skew in each schema. example: select * from skewcheck_func('public');
 

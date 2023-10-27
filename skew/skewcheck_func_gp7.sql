@@ -1,4 +1,4 @@
-CREATE TYPE type_skew_resultset as (tablename text,sys_segcount int,data_segcount int,maxsize_segid int,maxsize text,skew numeric(18,2),dk text);
+CREATE TYPE type_skew_resultset as (tablename regclass,sys_segcount int,data_segcount int,maxsize_segid int,maxsize text,skew numeric(18,2),dk text);
 
 
 
@@ -35,28 +35,26 @@ BEGIN
   
   drop table if exists skewresult_new2;
   create temp table skewresult_new2 (
-    tablename varchar(100),
-    partname varchar(200),
+    tablename regclass,
+    partname regclass,
     segid int,
     cnt bigint
-  ) distributed randomly;
+  ) distributed by (tablename);
   
   v_sql := 'insert into skewresult_new2 
-  select case when position(''_1_prt_'' in nsp.nspname||''.''||rel.relname)>0 then
-           substr(nsp.nspname||''.''||rel.relname,1,position(''_1_prt_'' in nsp.nspname||''.''||rel.relname)-1)
-         else nsp.nspname||''.''||rel.relname
-         end
-         ,nsp.nspname||''.''||rel.relname
-         ,rel.gp_segment_id
-         ,pg_relation_size(nsp.nspname||''.''||rel.relname) 
-  from gp_dist_random(''pg_class'') rel, pg_namespace nsp
-  where nsp.oid=rel.relnamespace and rel.relkind=''r'' and relstorage!=''x''
-        and nsp.nspname in '||v_schemastr;
+    select case when relispartition then pg_partition_root(rel.oid)
+           else rel.oid::regclass
+           end
+           ,rel.oid::regclass
+           ,rel.gp_segment_id
+           ,pg_relation_size(rel.oid) 
+    from gp_dist_random(''pg_class'') rel, pg_namespace nsp
+    where rel.relnamespace=nsp.oid and rel.relkind=''r'' and nsp.nspname in '||v_schemastr;
   execute v_sql;
   
   drop table if exists skewresult_tmp;
   create temp table skewresult_tmp (
-    tablename varchar(100),
+    tablename regclass,
     segid int,
     rec_num numeric(30,0)
   ) distributed by (tablename);
@@ -68,27 +66,37 @@ BEGIN
   ) group by 1,2 having sum(cnt)>0;
   
   drop table if exists skewresult_tabledk;
-  create temp table skewresult_tabledk
-  as 
-    select tablename,string_agg(attname,',' order by attid) dk
+  create temp table skewresult_tabledk (
+    tablename regclass,
+    dk text
+  ) distributed by (tablename);
+  
+  v_sql := 'insert into skewresult_tabledk
+    select tablename,string_agg(attname,'','' order by attid) dk
     from (
-      select nsp.nspname||'.'||rel.relname tablename,a.distkey[attid] attnum,attid,att.attname
+      select rel.oid::regclass tablename,a.distkey[attid] attnum,attid,att.attname
       from pg_catalog.gp_distribution_policy a,
            generate_series(0,50) attid,
            pg_attribute att,
            pg_class rel,
            pg_namespace nsp
-      where rel.oid=a.localoid and rel.relnamespace=nsp.oid and a.localoid=att.attrelid
-      and array_upper(a.distkey,1)>=attid and a.distkey[attid]=att.attnum
-      and relname not like '%_1_prt_%'
+      where rel.relnamespace=nsp.oid and rel.oid=a.localoid and a.localoid=att.attrelid
+      and array_upper(a.distkey,1)>=attid and a.distkey[attid]=att.attnum and rel.relispartition=false
+      and nsp.nspname in '||v_schemastr||'
     ) foo
-    group by 1
-  distributed randomly;
+    group by 1';
+  execute v_sql;
   
   drop table if exists tmp_skewresult;
-  create temp table tmp_skewresult
-  (tablename text,sys_segcount int,data_segcount int,maxsize_segid int,maxsize bigint,skew numeric(18,2),dk text)
-  distributed randomly;
+  create temp table tmp_skewresult (
+    tablename regclass,
+    sys_segcount int,
+    data_segcount int,
+    maxsize_segid int,
+    maxsize bigint,
+    skew numeric(18,2),
+    dk text
+  ) distributed by (tablename);
   
   insert into tmp_skewresult
   select t1.tablename,i_sys_segcount,t1.segcount,t2.segid max_segid,t2.segsize max_segsize,t3.skew::numeric(18,2),t4.dk
