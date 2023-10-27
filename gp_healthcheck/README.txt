@@ -1,8 +1,11 @@
 -------------------------
 aobloat:
 
-Install: 
+Installation: 
+For GP4.3, GP5 and GP6:
 psql -d dbname -af ./aobloat/check_ao_bloat.sql
+For GP7
+psql -d dbname -af ./aobloat/check_ao_bloat_gp7.sql
 
 Example:
 select * from AOtable_bloatcheck('schemaname');
@@ -13,7 +16,13 @@ Use this function to check bloat of AO table in the schema specified. (Not for h
 
 -------------------------
 skew:
-Installation: psql dbname -af ./skew/skewcheck_func.sql
+Installation: 
+For GP4.3 and GP5:
+psql dbname -af ./skew/skewcheck_func.sql
+For GP6:
+psql dbname -af ./skew/skewcheck_func_gp6.sql
+For GP7:
+psql dbname -af ./skew/skewcheck_func_gp7.sql
 
 Usage: Check table skew in each schema. example: select * from skewcheck_func('public');
 
@@ -40,6 +49,8 @@ For GP4.3 and GP5:
 psql dbname -af ./gpsize/load_files_size.sql
 For GP6:
 psql dbname -af ./gpsize/load_files_size_v6.sql
+For GP7:
+psql dbname -af ./gpsize/load_files_size_v7.sql
 
 Information:
 This component is used to query all data files on all segment instances. Query result load into table public.gp_seg_size.

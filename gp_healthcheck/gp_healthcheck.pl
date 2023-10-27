@@ -226,6 +226,7 @@ sub get_gpver {
   chomp($sver);
   @tmpstr = split / /,$sver;
   print $tmpstr[4]."\n";
+  info_notimestr("GP Version: $tmpstr[4]\n");
   @tmpver = split /\./,$tmpstr[4];
   print $tmpver[0]."\n";
   
@@ -497,9 +498,16 @@ sub object_size {
   info_notimestr("$tsfilenuminfo\n\n");
   
   print "---Check Large table top 50\n";
-  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
-             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c')
-             group by 1,2 order by sum(a.size) desc limit 50;};
+  if ($gpver>=7) {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
+               where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (3434,3435)
+               group by 1,2 order by sum(a.size) desc limit 50; };
+  } else {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c')
+               group by 1,2 order by sum(a.size) desc limit 50;};
+  }
   my $aotableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -508,9 +516,17 @@ sub object_size {
   }
   info("---AO Table top 50\n");
   info_notimestr("$aotableinfo\n\n");
-  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
-             from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage = 'h'
-             group by 1,2 order by sum(a.size) desc limit 50;};
+  
+  if ($gpver>=7) {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
+               where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam = 2
+               group by 1,2 order by sum(a.size) desc limit 50; };
+  } else {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage = 'h'
+               group by 1,2 order by sum(a.size) desc limit 50;};
+  }
   my $heaptableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -520,12 +536,21 @@ sub object_size {
   info("---Heap Table top 50\n");
   info_notimestr("$heaptableinfo\n\n");
   
-  $sql = qq{ select
-             substr(b.nspname||'.'||a.relname,1,position('_1_prt_' in b.nspname||'.'||a.relname)-1) as tablename,
-             c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
-             from gp_seg_table_size a,pg_namespace b,pg_class c 
-             where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h') and position('_1_prt_' in a.relname)>0
-             group by 1,2 order by sum(a.size) desc limit 100;};
+  if ($gpver>=7) {
+    $sql = qq{ select
+               pg_partition_root(c.oid)::regclass as root_partition,
+               d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
+               where a.oid=c.oid and c.relam=d.oid and c.relam in (2,3434,3435) and c.relispartition=true
+               group by 1,2 order by sum(a.size) desc limit 100;};
+  } else { 
+    $sql = qq{ select
+               substr(b.nspname||'.'||a.relname,1,position('_1_prt_' in b.nspname||'.'||a.relname)-1) as root_partition,
+               c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c 
+               where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h') and position('_1_prt_' in a.relname)>0
+               group by 1,2 order by sum(a.size) desc limit 100;};
+  }
   my $parttableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -535,11 +560,19 @@ sub object_size {
   info("---Partition Table Size top 100\n");
   info_notimestr("$parttableinfo\n\n");
 
-  $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
-             from gp_seg_table_size a,pg_namespace b,pg_class c 
-             where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h')
-             and b.nspname like 'pg_temp%'
-             group by 1,2 order by sum(a.size) desc limit 50;};
+  if ($gpver>=7) {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
+               where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (2,3434,3435)
+               and c.relpersistence='t'
+               group by 1,2 order by sum(a.size) desc limit 50;};
+  } else {
+    $sql = qq{ select b.nspname||'.'||a.relname as tablename, c.relstorage, pg_size_pretty(sum(a.size)::bigint) as table_size
+               from gp_seg_table_size a,pg_namespace b,pg_class c 
+               where a.relnamespace=b.oid and a.oid=c.oid and c.relstorage in ('a','c','h')
+               and b.nspname like 'pg_temp%'
+               group by 1,2 order by sum(a.size) desc limit 50;};
+  }
   my $temptableinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -721,8 +754,41 @@ sub chk_catalog {
   }
   chomp($pg_attribute_gpseg0);
   
-  $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute distributed randomly;
-            select pg_relation_size('tmp_pg_attribute_record');};
+  if ($gpver>=7) {
+    $sql = qq{create temp table tmp_pg_attribute_record (
+                attrelid      oid      ,
+                attname       name     ,
+                atttypid      oid      ,
+                attstattarget integer  ,
+                attlen        smallint ,
+                attnum        smallint ,
+                attndims      integer  ,
+                attcacheoff   integer  ,
+                atttypmod     integer  ,
+                attbyval      boolean  ,
+                attstorage    "char"   ,
+                attalign      "char"   ,
+                attnotnull    boolean  ,
+                atthasdef     boolean  ,
+                atthasmissing boolean  ,
+                attidentity   "char"   ,
+                attgenerated  "char"   ,
+                attisdropped  boolean  ,
+                attislocal    boolean  ,
+                attinhcount   integer  ,
+                attcollation  oid      ,
+                attacl        aclitem[],
+                attoptions    text[]   ,
+                attfdwoptions text[]   
+              ) distributed randomly;
+              insert into tmp_pg_attribute_record
+              select attrelid,attname,atttypid,attstattarget,attlen,attnum,attndims,attcacheoff,atttypmod,attbyval,attstorage,attalign,attnotnull,atthasdef,
+              atthasmissing,attidentity,attgenerated,attisdropped,attislocal,attinhcount,attcollation,attacl,attoptions,attfdwoptions from pg_attribute;
+              select pg_size_pretty(pg_relation_size('tmp_pg_attribute_record'));};
+  } else {
+    $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute distributed randomly;
+              select pg_relation_size('tmp_pg_attribute_record');};
+  }
   my $pg_attribute_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
@@ -741,8 +807,13 @@ sub chk_catalog {
   }
   chomp($pg_attribute_count);
   
-  $sql = qq{select count(*) from pg_partition_rule;};
-  my $partition_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  my $partition_count;
+  if ($gpver>=7) {
+    $sql = qq{select count(*) from pg_class where relispartition = true;};
+  } else { 
+    $sql = qq{select count(*) from pg_partition_rule;};
+  }
+  $partition_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("pg_partition_rule count error! \n");
@@ -768,20 +839,35 @@ sub chk_catalog {
   info_notimestr("pg_attribute size in master:   $pg_attribute_master\n");
   info_notimestr("pg_attribute size in gpseg0:   $pg_attribute_gpseg0\n");
   info_notimestr("pg_attribute bloat in master:  $pg_attribute_master_bloat\n");
-  info_notimestr("pg_partition_rule count:       $partition_count\n");
+  info_notimestr("partition count:               $partition_count\n");
   info_notimestr("\n");
   
   ####Query relstorage
-  $sql = qq{select a.nspname schemaname,
-            case when b.relstorage='a' then 'AO row' when b.relstorage='c' 
-            then 'AO column' when b.relstorage='h' 
-            then 'Heap' when b.relstorage='x' 
-            then 'External' else 'Others' end tabletype,
-            count(*) 
-            from pg_namespace a,pg_class b 
-            where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
-            group by 1,2 order by 1,2;
-           };
+  if ($gpver>=7) {
+    $sql = qq{select a.nspname schemaname,c.amname tabletype,count(*) 
+              from pg_namespace a,pg_class b,pg_am c
+              where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              group by 1,2
+              union all
+              select a.nspname schemaname,'foreign table' tabletype,count(*)
+              from pg_namespace a,pg_class b
+              where a.oid=b.relnamespace and relkind='f' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              group by 1,2
+              order by 1,2;
+             }; 
+  } else {
+    $sql = qq{select a.nspname schemaname,
+              case when b.relstorage='a' then 'AO row' 
+              when b.relstorage='c' then 'AO column' 
+              when b.relstorage='h' then 'Heap' 
+              when b.relstorage='x' then 'External' 
+              else 'Others' end tabletype,
+              count(*) 
+              from pg_namespace a,pg_class b 
+              where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              group by 1,2 order by 1,2;
+             }; 
+  }
   my $tabletype=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -791,16 +877,30 @@ sub chk_catalog {
   info("---Table type info per schema\n");
   info_notimestr("$tabletype\n");  
 
-  $sql = qq{select 
-            case when b.relstorage='a' then 'AO row' when b.relstorage='c' 
-            then 'AO column' when b.relstorage='h' 
-            then 'Heap' when b.relstorage='x' 
-            then 'External' else 'Others' end tabletype,
-            count(*) 
-            from pg_namespace a,pg_class b 
-            where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
-            group by 1 order by 1;
-           };
+  if ($gpver>=7) {
+    $sql = qq{select c.amname tabletype, count(*) 
+              from pg_namespace a,pg_class b,pg_am c
+              where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              group by 1 
+              union all
+              select 'foreign table' tabletype, count(*) 
+              from pg_namespace a,pg_class b 
+              where a.oid=b.relnamespace and b.relkind='f' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              order by 1;
+             };
+  } else {
+    $sql = qq{select 
+              case when b.relstorage='a' then 'AO row' 
+              when b.relstorage='c' then 'AO column' 
+              when b.relstorage='h' then 'Heap' 
+              when b.relstorage='x' then 'External' 
+              else 'Others' end tabletype,
+              count(*) 
+              from pg_namespace a,pg_class b 
+              where a.oid=b.relnamespace and relkind='r' and a.nspname not like 'pg%' and a.nspname not like 'gp%'
+              group by 1 order by 1;
+             };
+  }
   my $tabletype=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -876,7 +976,11 @@ sub chk_activity {
   info("---Check IDLE in transaction over one day\n");
   info_notimestr("$idle_info\n");
   
-  if ($gpver >= 6) {
+  if ($gpver >= 7) {
+    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,wait_event_type,wait_event,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
+             };
+  } elsif ($gpver == 6) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
              };
@@ -899,32 +1003,50 @@ sub chk_activity {
 sub chk_partition_info {
   my ($sql,$ret);
 
-  #####Query subpartition count
-  $sql = qq{select schemaname||'.'||tablename as tablename,count(*) as sub_count from pg_partitions
-            group by 1 order by 2 desc limit 100;
-           };
-  my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Subpartition count error! \n");
-    return(-1);
+  if ($gpver >= 7) {
+    #####Query subpartition count
+    $sql = qq{SELECT tablename,COUNT(*) FROM (
+                SELECT  pg_partition_root(c.oid)::regclass AS tablename,
+                        c.oid::regclass AS partitiontablename
+                FROM pg_class c
+                WHERE c.relispartition = true
+              ) foo GROUP BY 1 ORDER BY 2 DESC; };
+    my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+    $ret = $? >> 8;
+    if ($ret) {
+      error("Subpartition count error! \n");
+      return(-1);
+    }
+    info("---Subpartition info\n");
+    info_notimestr("$subpart\n");
+  } else {
+    #####Query subpartition count
+    $sql = qq{select schemaname||'.'||tablename as tablename,count(*) as sub_count from pg_partitions
+              group by 1 order by 2 desc limit 100;
+             };
+    my $subpart=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+    $ret = $? >> 8;
+    if ($ret) {
+      error("Subpartition count error! \n");
+      return(-1);
+    }
+    info("---Subpartition info\n");
+    info_notimestr("$subpart\n");  
+    
+    #####Check partition schema
+    $sql = qq{select schemaname||'.'||tablename as tablename,partitionschemaname||'.'||partitiontablename as partitiontablename
+              from pg_partitions where schemaname<>partitionschemaname order by 1,2;
+             };
+    my $part_schema=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+    $ret = $? >> 8;
+    if ($ret) {
+      error("Check partition schema error! \n");
+      return(-1);
+    }
+    info("---Check partition schema\n");
+    info_notimestr("$part_schema\n");
   }
-  info("---Subpartition info\n");
-  info_notimestr("$subpart\n");  
   
-  #####Check partition schema
-  $sql = qq{select schemaname||'.'||tablename as tablename,partitionschemaname||'.'||partitiontablename as partitiontablename
-            from pg_partitions where schemaname<>partitionschemaname order by 1,2;
-           };
-  my $part_schema=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Check partition schema error! \n");
-    return(-1);
-  }
-  info("---Check partition schema\n");
-  info_notimestr("$part_schema\n");  
-
 }
 
 
@@ -952,14 +1074,6 @@ sub skewcheck {
     error("recreate check_skew_result error! \n");
     return(-1);
   }
-  $sql = qq{ select count(*) from gp_segment_configuration where content>-1 and preferred_role='p'; };
-  my $seg_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Get segment instance count error\n");
-    return(-1);
-  }
-  chomp($seg_count);
   
   $num_proc = 0;
   $num_finish = 0;
@@ -974,106 +1088,21 @@ sub skewcheck {
     
     if ($pid==0) {
       #Child process
-      my $tmp_attcolname;
-      if ($gpver >= 6) {
-        $tmp_attcolname="distkey";
-      } else {
-        $tmp_attcolname="attrnums";
-      }
-      
-      $sql = qq{ drop table if exists skewresult_new2;
-                 create temp table skewresult_new2 (
-                   tablename varchar(100),
-                   partname varchar(200),
-                   segid int,
-                   cnt bigint
-                 ) distributed randomly;
-                 insert into skewresult_new2 
-                 select case when position('_1_prt_' in nsp.nspname||'.'||rel.relname)>0 then
-                          substr(nsp.nspname||'.'||rel.relname,1,position('_1_prt_' in nsp.nspname||'.'||rel.relname)-1)
-                        else nsp.nspname||'.'||rel.relname
-                        end
-                        ,nsp.nspname||'.'||rel.relname
-                        ,rel.gp_segment_id
-                        ,pg_relation_size(nsp.nspname||'.'||rel.relname) 
-                 from gp_dist_random('pg_class') rel, pg_namespace nsp
-                 where nsp.oid=rel.relnamespace and rel.relkind='r' and relstorage!='x' 
-                       and nsp.nspname='$schema_list[$icalc]';
-                 
-                 drop table if exists skewresult_tmp;
-                 create temp table skewresult_tmp (
-                   tablename varchar(100),
-                   segid int,
-                   rec_num numeric(30,0)
-                 ) distributed by (tablename);
-                 
-                 insert into skewresult_tmp
-                 select tablename,segid,sum(cnt) as rec_num from skewresult_new2
-                 where tablename in (
-                   select tablename from skewresult_new2 group by 1 having sum(cnt)>5368709120  --5GB
-                 ) group by 1,2 having sum(cnt)>0;
-                 
-                 drop table if exists skewresult_tabledk;
-                 create temp table skewresult_tabledk
-                 as 
-                   select tablename,string_agg(attname,',' order by attid) dk
-                   from (
-                     select nsp.nspname||'.'||rel.relname tablename,a.${tmp_attcolname}[attid] attnum,attid,att.attname
-                     from pg_catalog.gp_distribution_policy a,
-                          generate_series(0,50) attid,
-                          pg_attribute att,
-                          pg_class rel,
-                          pg_namespace nsp
-                     where rel.oid=a.localoid and rel.relnamespace=nsp.oid and a.localoid=att.attrelid
-                     and array_upper(a.${tmp_attcolname},1)>=attid and a.${tmp_attcolname}[attid]=att.attnum
-                     and relname not like '%_1_prt_%' and nsp.nspname='$schema_list[$icalc]'
-                   ) foo
-                   group by 1
-                 distributed randomly;
-                 
-                 insert into check_skew_result
-                 select t1.tablename,$seg_count,t1.segcount,t2.segid max_segid,pg_size_pretty(t2.segsize::bigint) max_segsize,t3.skew::numeric(18,2),t4.dk
-                 from (
-                   select tablename,count(*) as segcount from skewresult_tmp
-                   group by 1 having count(*)<$seg_count
-                 ) t1 
-                 inner join (
-                   select tablename,row_number() over(partition by tablename order by rec_num desc) rn,segid,rec_num segsize
-                   from skewresult_tmp
-                 ) t2 on t1.tablename=t2.tablename
-                 inner join (
-                   select tablename,avg(rec_num) as aver_num,max(rec_num) as max_num,(max(rec_num)-avg(rec_num))/avg(rec_num) as skew
-                   from skewresult_tmp
-                   group by tablename
-                 ) t3 on t1.tablename=t3.tablename
-                 left join skewresult_tabledk t4 on t1.tablename=t4.tablename
-                 where t2.rn=1;
-                 
-                 insert into check_skew_result
-                 select t1.tablename,$seg_count,t1.segcount,t2.segid max_segid,pg_size_pretty(t2.segsize::bigint) max_segsize,t3.skew::numeric(18,2),t4.dk 
-                 from (
-                 select tablename,count(*) as segcount from skewresult_tmp
-                   group by 1 having count(*)=$seg_count
-                 ) t1 
-                 inner join (
-                   select tablename,row_number() over(partition by tablename order by rec_num desc) rn,segid,rec_num segsize
-                   from skewresult_tmp
-                 ) t2 on t1.tablename=t2.tablename
-                 inner join (
-                   select tablename,avg(rec_num) as aver_num,max(rec_num) as max_num,(max(rec_num)-avg(rec_num))/avg(rec_num) as skew
-                   from skewresult_tmp
-                   group by tablename 
-                   having (max(rec_num)-avg(rec_num))/avg(rec_num)>5
-                 ) t3 on t1.tablename=t3.tablename
-                 left join skewresult_tabledk t4 on t1.tablename=t4.tablename
-                 where t2.rn=1;
-               };
+      $sql = qq{ copy (select * from skewcheck_func('$schema_list[$icalc]')) to '/tmp/tmpskew.$schema_list[$icalc].dat'; };
       $resultmsg=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>&1` ;
       $ret = $? >> 8;
       if ($ret) {
-        error("Skew check in $schema_list[$icalc] error! \n$resultmsg\n");
+        error("Unload skew in $schema_list[$icalc] error! \n$resultmsg\n");
         exit(-1);
       }
+      $sql = qq{ copy check_skew_result from '/tmp/tmpskew.$schema_list[$icalc].dat'; };
+      `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database 2>/dev/null` ;
+      $ret = $? >> 8;
+      if ($ret) {
+        error("Load skew in $schema_list[$icalc] into check_skew_result error! \n");
+        exit(-1);
+      }
+      
       exit(0);
     
     } else {                         
@@ -1112,6 +1141,7 @@ sub bloatcheck {
   my $icalc;
   my $itotal=$#schema_list+1;
   my $resultmsg;
+  my $pg_class_sql;
   
   print "---Begin to check bloat, jobs [$concurrency]\n";
   $sql = qq{ drop table if exists bloat_skew_result;
@@ -1127,6 +1157,11 @@ sub bloatcheck {
     return(-1);
   }
   
+  if ($gpver>=7) {
+    $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relam=2;};
+  } else {
+    $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';};
+  }
   ###Heap table
   $sql = qq{ drop table if exists pg_stats_bloat_chk;
              create temp table pg_stats_bloat_chk
@@ -1153,7 +1188,7 @@ sub bloatcheck {
              insert into pg_stats_bloat_chk
              select schemaname,tablename,attname,null_frac,avg_width,n_distinct from pg_stats;
              
-             insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';
+             $pg_class_sql;
              
              insert into pg_namespace_bloat_chk 
              select oid,nspname,nspowner from pg_namespace where nspname in $schema_str;
@@ -1335,7 +1370,12 @@ sub def_partition {
   my $resultmsg;
 
   print "---Begin to check default partition, jobs [$concurrency]\n";
-  $sql = qq{ select partitionschemaname||'.'||partitiontablename from pg_partitions where partitionisdefault=true and partitionschemaname in $schema_str; };
+  if ($gpver>=7) {
+    $sql = qq{ select c.nspname||'.'||b.relname from pg_partitioned_table a,pg_class b,pg_namespace c
+               where a.partdefid=b.oid and b.relnamespace=c.oid and b.relkind='r' and a.partdefid>0 and c.nspname in $schema_str; };
+  } else {
+    $sql = qq{ select partitionschemaname||'.'||partitiontablename from pg_partitions where partitionisdefault=true and partitionschemaname in $schema_str; };
+  }
   my @defpart_list = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
