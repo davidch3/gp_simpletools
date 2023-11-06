@@ -12,6 +12,7 @@ my ($IS_HELP,$IS_ALL,$CHK_SCHEMA,$SCHEMA_FILE,$EXCLUDE_SCHEMA,$EXCLUDE_SCHEMA_FI
 my @schema_list;
 my $schema_str;
 my $starttime;
+my $gpver;
 
 my $HELP_MESSAGE = qq{
 Usage:
@@ -252,6 +253,26 @@ sub set_env
   return 0;
 }
 
+sub get_gpver {
+  my @tmpstr;
+  my @tmpver;
+  my $sql = qq{select version();};
+  my $sver=`psql -A -X -t -c "$sql" -d postgres` ;
+  my $ret=$?;
+  if($ret) { 
+    print "Get GP version error!\n";
+    exit 1;
+  }
+  chomp($sver);
+  @tmpstr = split / /,$sver;
+  print $tmpstr[4]."\n";
+  info_notimestr("GP Version: $tmpstr[4]\n");
+  @tmpver = split /\./,$tmpstr[4];
+  print $tmpver[0]."\n";
+  
+  return $tmpver[0];
+}
+
 
 
 
@@ -393,6 +414,7 @@ sub bloatcheck {
   my $pid;
   my $icalc;
   my $itotal=$#schema_list+1;
+  my $pg_class_sql;
   
   print "---Start bloat check, jobs [$concurrency]\n";
   $sql = qq{ drop table if exists bloat_skew_result;
@@ -408,6 +430,11 @@ sub bloatcheck {
     return(-1);
   }
   
+  if ($gpver>=7) {
+    $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relam=2;};
+  } else {
+    $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';};
+  }
   ###Heap table
   info("---Start heap table bloat check...\n");
   $sql = qq{ drop table if exists pg_stats_bloat_chk;
@@ -435,7 +462,7 @@ sub bloatcheck {
              insert into pg_stats_bloat_chk
              select schemaname,tablename,attname,null_frac,avg_width,n_distinct from pg_stats;
              
-             insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';
+             $pg_class_sql
              
              insert into pg_namespace_bloat_chk 
              select oid,nspname,nspowner from pg_namespace where nspname in $schema_str;
@@ -665,6 +692,7 @@ sub parallel_run{
 sub main{
   getOption();
   set_env();
+  $gpver=get_gpver();
   my $chkret1=checkWeekday($WEEK_DAYS);
   my $chkret2=checkCurrentDay($EXCLUDE_DATE);
   
