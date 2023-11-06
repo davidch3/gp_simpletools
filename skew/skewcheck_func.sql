@@ -48,7 +48,7 @@ BEGIN
          end
          ,nsp.nspname||''.''||rel.relname
          ,rel.gp_segment_id
-         ,pg_relation_size(nsp.nspname||''.''||rel.relname) 
+         ,pg_relation_size(E''\"''||nsp.nspname||E''\".\"''||rel.relname||E''\"'') 
   from gp_dist_random(''pg_class'') rel, pg_namespace nsp
   where nsp.oid=rel.relnamespace and rel.relkind=''r'' and relstorage!=''x'' 
         and nsp.nspname in '||v_schemastr;

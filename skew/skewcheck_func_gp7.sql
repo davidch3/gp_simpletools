@@ -164,22 +164,21 @@ BEGIN
   
   drop table if exists skewresult_new2;
   create temp table skewresult_new2 (
-    tablename varchar(100),
-    partname varchar(200),
+    tablename regclass,
+    partname regclass,
     segid int,
     cnt bigint
   ) distributed randomly;
+  
   insert into skewresult_new2 
-  select case when position('_1_prt_' in nsp.nspname||'.'||rel.relname)>0 then
-           substr(nsp.nspname||'.'||rel.relname,1,position('_1_prt_' in nsp.nspname||'.'||rel.relname)-1)
-         else nsp.nspname||'.'||rel.relname
+  select case when relispartition then pg_partition_root(rel.oid)
+         else rel.oid::regclass
          end
-         ,nsp.nspname||'.'||rel.relname
+         ,rel.oid::regclass
          ,rel.gp_segment_id
-         ,pg_relation_size(nsp.nspname||'.'||rel.relname) 
+         ,pg_relation_size(rel.oid) 
   from gp_dist_random('pg_class') rel, pg_namespace nsp
-  where nsp.oid=rel.relnamespace and rel.relkind='r' and relstorage!='x' 
-        and nsp.nspname not like 'pg%' and nsp.nspname not like 'gp%';
+  where rel.relnamespace=nsp.oid and rel.relkind='r';
   
   drop table if exists skewresult_tmp;
   create temp table skewresult_tmp (
