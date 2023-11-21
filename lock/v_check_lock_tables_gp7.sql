@@ -13,7 +13,7 @@ select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename
 from pg_locks aaa
 inner join pg_stat_activity bbb on aaa.pid=bbb.pid
 where aaa.granted=false and aaa.relation>16384 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
-and aaa.mode<>'ShareLock' and bbb.waiting=true
+and aaa.mode<>'ShareLock' and bbb.wait_event_type='Lock'
 ) tab1
 inner join (
 select locktype,relation::regclass as tablename,aaa.pid,mode as lockmode,usename,bbb.xact_start,substr(bbb.query,1,100) as current_query,bbb.state,

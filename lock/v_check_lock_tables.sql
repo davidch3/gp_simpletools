@@ -11,7 +11,7 @@ select locktype,relation::regclass as tablename,pid,mode as lockmode,usename,bbb
        now()-bbb.xact_start as wait_time
 from pg_locks aaa
 inner join pg_stat_activity bbb on aaa.pid=bbb.procpid
-where aaa.granted=false and aaa.relation>30000 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
+where aaa.granted=false and aaa.relation>16384 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
 and aaa.mode<>'ShareLock' and bbb.waiting=true
 ) tab1
 inner join (
@@ -19,7 +19,7 @@ select locktype,relation::regclass as tablename,pid,mode as lockmode,usename,bbb
        now()-bbb.xact_start as xact_time
 from pg_locks aaa
 inner join pg_stat_activity bbb on aaa.pid=bbb.procpid
-where aaa.granted=true and aaa.relation>30000 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
+where aaa.granted=true and aaa.relation>16384 and aaa.gp_segment_id=-1 and aaa.locktype='relation'
 and aaa.mode<>'ShareLock'
 ) tab2 on tab1.tablename=tab2.tablename and tab1.wait_time<tab2.xact_time;
 
