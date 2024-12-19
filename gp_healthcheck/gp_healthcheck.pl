@@ -1481,7 +1481,7 @@ sub chk_os_param{
     error("Gpssh check sysctl.conf error\n");
     #return(-1);
   }
-  info("---Check /etc/sysctl.conf \n");
+  info("---Check /etc/sysctl.conf ...\n");
   info_notimestr("$param_info\n\n");
   
   $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "ulimit -a"`;
@@ -1490,7 +1490,7 @@ sub chk_os_param{
     error("Gpssh check ulimit error\n");
     return(-1);
   }
-  info("---Check ulimit \n");
+  info("---Check ulimit ...\n");
   info_notimestr("$param_info\n\n");
   
   $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "mount |grep xfs"`;
@@ -1499,7 +1499,7 @@ sub chk_os_param{
     error("Gpssh check mount info\n");
     return(-1);
   }
-  info("---Check mount info \n");
+  info("---Check mount info ...\n");
   info_notimestr("$param_info\n\n");
   
   $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "cat /sys/kernel/mm/transparent_hugepage/enabled"`;
@@ -1508,7 +1508,7 @@ sub chk_os_param{
     error("Gpssh check hugepage \n");
     return(-1);
   }
-  info("---Check hugepage \n");
+  info("---Check hugepage ...\n");
   info_notimestr("$param_info\n\n");
   
   $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "date"`;
@@ -1517,7 +1517,7 @@ sub chk_os_param{
     error("Gpssh check system clock \n");
     return(-1);
   }
-  info("---Check system clock \n");
+  info("---Check system clock ...\n");
   info_notimestr("$param_info\n\n");
 
 }
