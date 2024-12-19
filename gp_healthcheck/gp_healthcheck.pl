@@ -6,12 +6,13 @@ use POSIX;
 use FindBin qw($Bin $Script);
 
 my $cmd_name=$Script;
-my ($hostname,$port,$database,$username,$password)=("localhost","5432","postgres","gpadmin","gpadmin");    ###default
-my ($IS_HELP,$IS_ALL,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$GLOBAL_ONLY,$DB_ONLY);
+my ($hostname,$port,$database,$username,$password)=("localhost","5432","","gpadmin","gpadmin");    ###default
+my ($IS_HELP,$IS_ALLSCHEMA,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$IS_ALLDB);
 my $fh_log;
 my @schema_list;
 my $schema_str;
 my $gpver;
+my @dbname_list;
 
 my $HELP_MESSAGE = qq{
 Usage:
@@ -36,14 +37,14 @@ Options:
   --help | -?
     Show the help message.
   
-  --all | -a
-    Check all the schema in database.
+  --alldb | -A
+    Check all database in GP cluster. 
   
   --log-dir | -l <log_directory>
     The directory to write the log file. Default: ~/gpAdminLogs.
   
   --jobs <parallel_job_number>
-    The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2
+    The number of parallel jobs to check skew, bloat and default partition. Default value: 2
   
   --include-schema <schema_name>
     Check (include: skew, bloat) only specified schema(s). --include-schema can be specified multiple times.
@@ -51,16 +52,12 @@ Options:
   --include-schema-file <schema_filename>
     A file containing a list of schema to be included in healthcheck.
   
-  --global-info-only
-    Check and output the global information of GPDB, skip check: skew, bloat, default partition
-  
-  --check-db-only
-    Check information in DB specified, Skip global information of GP cluster.
-
 Examples:
-  perl $cmd_name --dbname testdb --all --jobs 3
+  perl $cmd_name --dbname testdb --jobs 3
   
-  perl $cmd_name --dbname testdb --include-schema public --include-schema gpp_sync
+  perl $cmd_name --dbname testdb --include-schema public --include-schema gpp_sync --jobs 3
+  
+  perl $cmd_name --alldb --jobs 3
   
   perl $cmd_name --help
   
@@ -75,11 +72,9 @@ sub getOption{
   
   $concurrency = 2;
   $LOG_DIR = "~/gpAdminLogs";
+  $IS_ALLSCHEMA = 0;
   $SCHEMA_FILE = "";
   
-  if (length($ENV{PGDATABASE}) > 0) {
-    $database = $ENV{PGDATABASE};
-  }
   GetOptions(
       'hostname|h:s'          => \$hostname,
       'port|p:s'              => \$port,
@@ -87,13 +82,11 @@ sub getOption{
       'username:s'            => \$username,
       'password|pw:s'         => \$password,
       'help|?!'               => \$IS_HELP,
-      'a|all!'                => \$IS_ALL,
+      'A|alldb!'              => \$IS_ALLDB,
       'include-schema|s:s'    => \@CHK_SCHEMA,
       'include-schema-file:s' => \$SCHEMA_FILE,
       'jobs:s'                => \$concurrency,
       'log-dir:s'             => \$LOG_DIR,
-      'global-info-only!'     => \$GLOBAL_ONLY,
-      'check-db-only!'        => \$DB_ONLY,
   );
   if(@ARGV != 0){
     print "Input error: [@ARGV]\nPlease show help: perl $cmd_name --help\n";
@@ -103,30 +96,34 @@ sub getOption{
     print $HELP_MESSAGE;
     exit 0;
   }
+
+  
+  if ( $IS_ALLDB && length($database)>0 ) {
+    print "Input error: The following options may not be specified together: --alldb, --dbname <database_name>\n";
+    exit 0;
+  } elsif ( !$IS_ALLDB && length($database)==0 && length($ENV{PGDATABASE})>0 ) {
+    $database = $ENV{PGDATABASE};
+  } elsif ( !$IS_ALLDB && length($database)==0 && length($ENV{PGDATABASE})==0 ) {
+    print "Input error: Please specify one of this options: --alldb or --dbname <database_name>\n";
+    exit 0;
+  } 
+  
+
   my $itmp=0;
-  if ($IS_ALL) { $itmp++; }
   if ($#CHK_SCHEMA>=0) { $itmp++; }
   if (length($SCHEMA_FILE)>0) { $itmp++; }
-  if ( $itmp>1 ) {
-    print "Input error: The following options may not be specified together: all, include-schema, include-schema-file\n";
+  if ( $IS_ALLDB && $itmp>0 ) {
+    print "Input error: The option --alldb may not be specified with include-schema, include-schema-file\n";
     exit 0;
   }
-  if ( $itmp==0 ) {
-    print "Input error: The following options should be specified one: all, include-schema, include-schema-file\n";
+  if ( $itmp>1 ) {
+    print "Input error: The following options may not be specified together: include-schema, include-schema-file\n";
     exit 0;
   }
   if ( $concurrency=="" || $concurrency<=0 ) {
-    print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2\n";
+    print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat, default partition. Default value: 2\n";
     exit 0;
   }
-  $itmp=0;
-  if ($GLOBAL_ONLY) { $itmp++; }
-  if ($DB_ONLY) { $itmp++; }
-  if ( $itmp>1 ) {
-    print "Input error: The following options may not be specified together: global-info-only, check-db-only\n";
-    exit 0;
-  }
-  #print $hostname."\n".$port."\n".$database."\n".$username."\n".$password."\n".$IS_HELP."\n".$IS_ALL."\n".$#CHK_SCHEMA."\n".$SCHEMA_FILE."\n".$concurrency."\n".$LOG_DIR."\n";
   
 }
 
@@ -206,7 +203,6 @@ sub set_env
 {
    $ENV{"PGHOST"}=$hostname;
    $ENV{"PGPORT"}=$port;
-   $ENV{"PGDATABASE"}=$database;
    $ENV{"PGUSER"}=$username;
    $ENV{"PGPASSWORD"}=$password;
 
@@ -265,27 +261,36 @@ sub handler {
 
 
 
+sub get_dbname{
+  my ($sql,$ret);
+  my $i;
+  
+  ###--alldb
+  if ($IS_ALLDB) {
+    $sql = qq{ select datname from pg_database where datname not in ('postgres','template1','template0','gpperfmon','diskquota') order by 1; };
+    @dbname_list = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
+    $ret = $? >> 8;
+    if ($ret) {
+      error("Query all database name error\n");
+      exit(1);
+    }
+    $IS_ALLSCHEMA = 1;   ###If IS_ALLDB is true, IS_ALLSCHEMA default to be true.
+  } else {
+    push @dbname_list,$database;
+  }
+
+}
+
 
 sub get_schema{
   my ($sql,$ret);
   my $i;
   
-  ###--all
-  if ($IS_ALL) {
-    $sql = qq{ select nspname from pg_namespace where nspname not like 'pg%' and nspname not like 'gp%' order by 1; };
-    @schema_list = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
-    $ret = $? >> 8;
-    if ($ret) {
-      error("Query all schema name error\n");
-      exit(1);
-    }
-  }
-  ###--include-schema
   if ($#CHK_SCHEMA>=0) {
+    ###--include-schema
     push @schema_list,@CHK_SCHEMA ;
-  }
-  ###--include-schema-file
-  if (length($SCHEMA_FILE)>0) {
+  } elsif (length($SCHEMA_FILE)>0) {
+    ###--include-schema-file
     unless (-e $SCHEMA_FILE) {
       error "Schema file $SCHEMA_FILE do not exist!\n" ;
       exit(1);
@@ -302,6 +307,18 @@ sub get_schema{
       }
     }
     close SCHFILE;
+  } else {
+    ###--allschema
+    $IS_ALLSCHEMA = 1;
+    $sql = qq{ select nspname from pg_namespace 
+               where nspname not like 'pg%' and nspname not like 'gp%' and nspname not in ('information_schema')
+               order by 1; };
+    @schema_list = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+    $ret = $? >> 8;
+    if ($ret) {
+      error("Query all schema name error\n");
+      exit(1);
+    }
   }
   
   $schema_str="(";
@@ -328,7 +345,7 @@ sub Gpstate {
   info_notimestr("$stateinfo\n");
   
   $sql = qq{ select * from gp_configuration_history order by 1 desc limit 50; };
-  my $confhis=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  my $confhis=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Get gp_configuration_history error\n");
@@ -339,27 +356,27 @@ sub Gpstate {
 }
 
 
-sub Gpcusterinfo {
+sub Gpclusterinfo {
   my ($sql,$ret);
   
   print "---Check GP cluster info\n";
   ###export hostfile
   $sql = qq{ copy (select distinct address from gp_segment_configuration where content=-1 order by 1) to '/tmp/tmpallmasters'; };
-  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Export tmp allmasters error\n");
     exit(1);
   }
   $sql = qq{ copy (select distinct address from gp_segment_configuration order by 1) to '/tmp/tmpallhosts'; };
-  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Export tmp allhosts error\n");
     exit(1);
   }
   $sql = qq{ copy (select distinct address from gp_segment_configuration where content>-1 order by 1) to '/tmp/tmpallsegs'; };
-  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Export tmp allsegs error\n");
@@ -368,7 +385,7 @@ sub Gpcusterinfo {
   
   ###global info
   $sql = qq{ select count(distinct hostname) from gp_segment_configuration where content>-1; };
-  my $hostcount=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  my $hostcount=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Get segment host count error\n");
@@ -376,7 +393,7 @@ sub Gpcusterinfo {
   }
   chomp($hostcount);
   $sql = qq{ select count(*) from gp_segment_configuration where content>-1 and preferred_role='p'; };
-  my $segcount=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  my $segcount=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres`;
   $ret = $? >> 8;
   if ($ret) {
     error("Get segment instance count error\n");
@@ -411,7 +428,7 @@ sub db_size {
   print "---Check database size\n";
   $sql = qq{ select datname,pg_size_pretty(pg_database_size(oid)) from pg_database
   	         where datname not in ('postgres','template1','template0');};
-  my $dbsizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  my $dbsizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
   $ret = $? >> 8;
   if ($ret) {
     error("Query db size error\n");
@@ -420,6 +437,87 @@ sub db_size {
   info("---Database size\n");
   info_notimestr("$dbsizeinfo\n\n");
 }
+
+
+
+sub chk_age {
+  my ($sql,$ret);
+  
+  print "---Check database AGE\n";
+  $sql = qq{ select datname,age(datfrozenxid) from pg_database order by 2 desc;};
+  my $master_age=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query master age error! \n");
+    return(-1);
+  }
+  $sql = qq{ select gp_segment_id,datname,age(datfrozenxid) from gp_dist_random('pg_database') order by 3 desc limit 50;};
+  my $seg_age=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query Segment instance age error! \n");
+    return(-1);
+  }
+  
+  info("---Database AGE\n");
+  info("---Master\n");
+  info_notimestr("$master_age\n");
+  info("---Segment instance\n");
+  info_notimestr("$seg_age\n");
+  
+}
+
+
+sub chk_activity {
+  my ($sql,$ret);
+  
+  print "---Check pg_stat_activity\n";
+  if ($gpver >= 6) {
+    $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where state='idle in transaction' and 
+               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+             };
+  } else {
+    $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where current_query='<IDLE> in transaction' and 
+               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+             };
+  }
+  my $idle_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query IDLE in transaction error! \n");
+    return(-1);
+  }
+  info("---Check IDLE in transaction over one day\n");
+  info_notimestr("$idle_info\n");
+  
+  if ($gpver >= 7) {
+    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,wait_event_type,wait_event,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
+             };
+  } elsif ($gpver == 6) {
+    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
+             };
+  } else {
+    $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
+               from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day'
+             };
+  }
+  my $query_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query long SQL error! \n");
+    return(-1);
+  }
+  info("---Check SQL running over one day\n");
+  info_notimestr("$query_info\n");
+  
+}
+
+
+
 
 sub object_size {
 	my ($sql,$ret);
@@ -623,7 +721,7 @@ sub chk_catalog {
   
   ########pg_namespace
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace'));};
-  my $pg_namespace_size=`psql -A -X -t -c "$sql"` ;
+  my $pg_namespace_size=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace size error! \n");
@@ -632,7 +730,7 @@ sub chk_catalog {
   chomp($pg_namespace_size);
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace')),pg_relation_size('pg_namespace');};
-  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql"` ;
+  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace master size error! \n");
@@ -644,7 +742,7 @@ sub chk_catalog {
   my $pg_namespace_master_int = $tmpstr[1];
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace')) from gp_dist_random('gp_id') where gp_segment_id=0;};
-  my $pg_namespace_gpseg0=`psql -A -X -t -c "$sql"` ;
+  my $pg_namespace_gpseg0=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace gpseg0 size error! \n");
@@ -652,9 +750,9 @@ sub chk_catalog {
   }
   chomp($pg_namespace_gpseg0);
   
-  $sql = qq{create temp table tmp_pg_namespace_record as select * from pg_namespace distributed randomly;
+  $sql = qq{create temp table tmp_pg_namespace_record as select * from pg_namespace;
             select pg_relation_size('tmp_pg_namespace_record');};
-  my $pg_namespace_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_namespace_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace realsize error! \n");
@@ -664,7 +762,7 @@ sub chk_catalog {
   my $pg_namespace_master_bloat = $pg_namespace_master_int / $pg_namespace_realsize;
   
   $sql = qq{select count(*) from pg_namespace;};
-  my $pg_namespace_count=`psql -A -X -t -c "$sql"` ;
+  my $pg_namespace_count=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace count error! \n");
@@ -703,9 +801,9 @@ sub chk_catalog {
   }
   chomp($pg_class_gpseg0);
   
-  $sql = qq{create temp table tmp_pg_class_record as select * from pg_class distributed randomly;
+  $sql = qq{create temp table tmp_pg_class_record as select * from pg_class;
             select pg_relation_size('tmp_pg_class_record');};
-  my $pg_class_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_class_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_class realsize error! \n");
@@ -780,16 +878,16 @@ sub chk_catalog {
                 attacl        aclitem[],
                 attoptions    text[]   ,
                 attfdwoptions text[]   
-              ) distributed randomly;
+              );
               insert into tmp_pg_attribute_record
               select attrelid,attname,atttypid,attstattarget,attlen,attnum,attndims,attcacheoff,atttypmod,attbyval,attstorage,attalign,attnotnull,atthasdef,
               atthasmissing,attidentity,attgenerated,attisdropped,attislocal,attinhcount,attcollation,attacl,attoptions,attfdwoptions from pg_attribute;
               select pg_size_pretty(pg_relation_size('tmp_pg_attribute_record'));};
   } else {
-    $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute distributed randomly;
+    $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute;
               select pg_relation_size('tmp_pg_attribute_record');};
   }
-  my $pg_attribute_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql"` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_attribute_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_attribute realsize error! \n");
@@ -923,82 +1021,6 @@ sub chk_catalog {
 
 }
 
-
-sub chk_age {
-  my ($sql,$ret);
-  
-  print "---Check database AGE\n";
-  $sql = qq{ select datname,age(datfrozenxid) from pg_database order by 2 desc;};
-  my $master_age=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Query master age error! \n");
-    return(-1);
-  }
-  $sql = qq{ select gp_segment_id,datname,age(datfrozenxid) from gp_dist_random('pg_database') order by 3 desc limit 50;};
-  my $seg_age=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Query Segment instance age error! \n");
-    return(-1);
-  }
-  
-  info("---Database AGE\n");
-  info("---Master\n");
-  info_notimestr("$master_age\n");
-  info("---Segment instance\n");
-  info_notimestr("$seg_age\n");
-  
-}
-
-
-sub chk_activity {
-  my ($sql,$ret);
-  
-  print "---Check pg_stat_activity\n";
-  if ($gpver >= 6) {
-    $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where state='idle in transaction' and 
-               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
-             };
-  } else {
-    $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where current_query='<IDLE> in transaction' and 
-               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
-             };
-  }
-  my $idle_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Query IDLE in transaction error! \n");
-    return(-1);
-  }
-  info("---Check IDLE in transaction over one day\n");
-  info_notimestr("$idle_info\n");
-  
-  if ($gpver >= 7) {
-    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,wait_event_type,wait_event,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
-             };
-  } elsif ($gpver == 6) {
-    $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
-             };
-  } else {
-    $sql = qq{ select procpid,sess_id,usename,substr(current_query,1,100) current_query,waiting,query_start,xact_start,backend_start,client_addr
-               from pg_stat_activity where current_query not like '%IDLE%' and now()-query_start>interval '1 day'
-             };
-  }
-  my $query_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d $database` ;
-  $ret = $? >> 8;
-  if ($ret) {
-    error("Query long SQL error! \n");
-    return(-1);
-  }
-  info("---Check SQL running over one day\n");
-  info_notimestr("$query_info\n");
-  
-}
 
 sub chk_partition_info {
   my ($sql,$ret);
@@ -1188,7 +1210,7 @@ sub bloatcheck {
              insert into pg_stats_bloat_chk
              select schemaname,tablename,attname,null_frac,avg_width,n_distinct from pg_stats;
              
-             $pg_class_sql;
+             $pg_class_sql
              
              insert into pg_namespace_bloat_chk 
              select oid,nspname,nspowner from pg_namespace where nspname in $schema_str;
@@ -1350,14 +1372,14 @@ sub bloatcheck {
   my $logday=getCurrentDate();
   if ( $bloatcount>0 ) {
     $sql = qq{ copy (select 'alter table '||tablename||' set with (reorganize=true); analyze '||tablename||';' from bloat_skew_result) 
-    	         to '/tmp/fix_ao_table_script_$logday.sql'; };
+    	         to '/tmp/fix_ao_table_script_${database}_$logday.sql'; };
     `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
     $ret = $? >> 8;
     if ($ret) {
       error("Unload bloat table fix script error! \n");
       return(-1);
     }
-    info_notimestr("\nPlease check fix script: /tmp/fix_ao_table_script_$logday.sql\n");
+    info_notimestr("\nPlease check fix script: /tmp/fix_ao_table_script_${database}_$logday.sql\n");
   }
     
 }
@@ -1443,14 +1465,126 @@ sub def_partition {
   }
   info("---Default partition check\n");
   info_notimestr("\n$defpartresult\n");
-    
   
 }
+
+
+sub chk_os_param{
+  my $ret;
+  my $param_info;
+  
+  print "---Check OS parameter\n";
+  
+  $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "cat /etc/sysctl.conf |grep -vE '^\\s*#|^\\s*\$'"`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Gpssh check sysctl.conf error\n");
+    #return(-1);
+  }
+  info("---Check /etc/sysctl.conf \n");
+  info_notimestr("$param_info\n\n");
+  
+  $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "ulimit -a"`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Gpssh check ulimit error\n");
+    return(-1);
+  }
+  info("---Check ulimit \n");
+  info_notimestr("$param_info\n\n");
+  
+  $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "mount |grep xfs"`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Gpssh check mount info\n");
+    return(-1);
+  }
+  info("---Check mount info \n");
+  info_notimestr("$param_info\n\n");
+  
+  $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "cat /sys/kernel/mm/transparent_hugepage/enabled"`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Gpssh check hugepage \n");
+    return(-1);
+  }
+  info("---Check hugepage \n");
+  info_notimestr("$param_info\n\n");
+  
+  $param_info = `gpssh -d 0 -f /tmp/tmpallhosts "date"`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Gpssh check system clock \n");
+    return(-1);
+  }
+  info("---Check system clock \n");
+  info_notimestr("$param_info\n\n");
+
+}
+
+
+sub chk_gpdb_param{
+  my ($sql,$ret);
+  my $param_info;
+  my $master_dir;
+
+  if ($gpver >= 7) {
+    $master_dir=$ENV{COORDINATOR_DATA_DIRECTORY};
+  } else {
+    $master_dir=$ENV{MASTER_DATA_DIRECTORY};
+  }
+  
+  print "---Check GPDB parameter\n";
+  
+  $param_info = `cat $master_dir/postgresql.conf | grep -vE '^\\s*#|^\\s*\$'`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Check postgresql.conf error\n");
+    return(-1);
+  }
+  info("---Check setting in postgresql.conf ...\n");
+  info_notimestr("$param_info\n\n");
+  
+  if ($gpver >= 6) {
+    $sql = qq{ select a.datname,array_to_string(b.setconfig,',') db_setting
+    	         from pg_database a,pg_db_role_setting b where a.oid=b.setdatabase and b.setrole=0;
+             };
+  } else {
+    $sql = qq{ select datname,array_to_string(datconfig,',') db_setting from pg_database where datconfig is not null; };
+  }
+  my $param_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query setting on database error! \n");
+    return(-1);
+  }
+  info("---Check setting on database ...\n");
+  info_notimestr("$param_info\n");
+  
+    if ($gpver >= 6) {
+    $sql = qq{ select a.rolname,array_to_string(b.setconfig,',') role_setting
+    	         from pg_roles a,pg_db_role_setting b where a.oid=b.setrole and b.setdatabase=0;
+             };
+  } else {
+    $sql = qq{ select rolname,array_to_string(rolconfig,',') role_setting from pg_roles where rolconfig is not null; };
+  }
+  my $param_info=`psql -X -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query setting on role error! \n");
+    return(-1);
+  }
+  info("---Check setting on role ...\n");
+  info_notimestr("$param_info\n");
+
+}
+
 
 
 
 sub main{
   my $ret;
+  my $i;
   
   getOption();
   set_env();
@@ -1458,33 +1592,47 @@ sub main{
   info("-----------------------------------------------------\n");
   info("------Begin GPDB health check\n");
   info("-----------------------------------------------------\n");
-  info_notimestr("Hostname: $hostname\nPort: $port\nDatabase: $database\nUsername: $username\nConcurrency: $concurrency\nLogDIR: $LOG_DIR\n");
+  info_notimestr("Hostname: $hostname\nPort: $port\nUsername: $username\nConcurrency: $concurrency\nLogDIR: $LOG_DIR\n");
   $gpver=get_gpver();
-  get_schema();
   info("-----------------------------------------------------\n");
+  get_dbname();
   
-  if ( !$DB_ONLY ) {
-    Gpstate();
-    Gpcusterinfo();
-    disk_space();
-    db_size();
-  }
-  object_size();
-  chk_catalog();
+  ####GP cluster info
+  Gpstate();
+  Gpclusterinfo();
+  disk_space();
+  db_size();
   chk_age();
   chk_activity();
-  chk_partition_info();
-  
-  if ( !$GLOBAL_ONLY ) {
+
+  for ($i=0;$i<$#dbname_list+1;$i++) {
+    chomp($dbname_list[$i]);
+    $database = $dbname_list[$i];
+    print "------Begin to check database: $database\n";
+    info("-----------------------------------------------------\n");
+    info("------Begin to check database: $database\n");
+    info("-----------------------------------------------------\n");
+    get_schema();
+    chk_catalog();
+    object_size();
+    chk_partition_info();
     skewcheck();
     bloatcheck();
     def_partition();
   }
-  
-  ########
-  
+
   info("-----------------------------------------------------\n");
-  info("------Finish GPDB health check!\n");
+  info("------Begin to check OS parameter\n");
+  info("-----------------------------------------------------\n");
+  chk_os_param();
+
+  info("-----------------------------------------------------\n");
+  info("------Begin to check GPDB parameter\n");
+  info("-----------------------------------------------------\n");
+  chk_gpdb_param();
+ 
+  info("-----------------------------------------------------\n");
+  info("------Finished GPDB health check!\n");
   info("-----------------------------------------------------\n\n\n");
   closeLog();
 }

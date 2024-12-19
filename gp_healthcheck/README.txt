@@ -79,7 +79,7 @@ Options:
   --dbname | -d <database_name>
     Database name. If not specified, uses the value specified by the environment variable PGDATABASE, even if PGDATABASE is not specified, return error.
   
-  --username | -d <user_name>
+  --username | -u <user_name>
     The super user of GPDB. Default: gpadmin
     
   --password | -pw <password>
@@ -88,14 +88,14 @@ Options:
   --help | -?
     Show the help message.
   
-  --all | -a
-    Check all the schema in database.
+  --alldb | -A
+    Check all database in GP cluster. 
   
   --log-dir | -l <log_directory>
     The directory to write the log file. Default: ~/gpAdminLogs.
   
   --jobs <parallel_job_number>
-    The number of parallel jobs to healthcheck, include: skew, bloat. Default: 2
+    The number of parallel jobs to check skew, bloat and default partition. Default value: 2
   
   --include-schema <schema_name>
     Check (include: skew, bloat) only specified schema(s). --include-schema can be specified multiple times.
@@ -103,13 +103,14 @@ Options:
   --include-schema-file <schema_filename>
     A file containing a list of schema to be included in healthcheck.
   
-  --global-info-only
-    Check and output the global information of GPDB, skip check: skew, bloat, default partition
-
 Examples:
-  perl gp_healthcheck.pl --dbname testdb --all --jobs 3
+  perl gp_healthcheck.pl --dbname testdb --jobs 3
   
-  perl gp_healthcheck.pl --dbname testdb --include-schema public --include-schema gpp_sync
+  perl gp_healthcheck.pl --dbname testdb --include-schema public --include-schema gpp_sync --jobs 3
+  
+  perl gp_healthcheck.pl --alldb --jobs 3
+  
+  perl gp_healthcheck.pl -A --jobs 3
   
   perl gp_healthcheck.pl --help
 
