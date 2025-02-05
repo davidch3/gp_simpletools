@@ -215,18 +215,29 @@ sub get_gpver {
   my $sql = qq{select version();};
   my $sver=`psql -A -X -t -c "$sql" -d postgres` ;
   my $ret=$?;
+  my $sresult;
   if($ret) { 
     print "Get GP version error!\n";
     exit 1;
   }
   chomp($sver);
-  @tmpstr = split / /,$sver;
-  print $tmpstr[4]."\n";
-  info_notimestr("GP Version: $tmpstr[4]\n");
-  @tmpver = split /\./,$tmpstr[4];
-  print $tmpver[0]."\n";
   
-  return $tmpver[0];
+  if ( $sver =~ /Greenplum Database/ ) {
+    @tmpstr = split / /,$sver;
+    print $tmpstr[4]."\n";
+    info_notimestr("GP Version: $tmpstr[4]\n");
+    @tmpver = split /\./,$tmpstr[4];
+    $sresult = "gp".$tmpver[0];
+    print $sresult."\n";
+  } elsif ( $sver =~ /Cloudberry Database/ ) {
+    @tmpstr = split / /,$sver;
+    print $tmpstr[4]."\n";
+    info_notimestr("CBDB Version: $tmpstr[4]\n");
+    $sresult = "cbdb".$tmpstr[4];
+    print $sresult."\n";
+  }
+  
+  return $sresult;
 }
 
 
@@ -472,10 +483,10 @@ sub chk_activity {
   my ($sql,$ret);
   
   print "---Check pg_stat_activity\n";
-  if ($gpver >= 6) {
+  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='idle in transaction' and 
-               (now()-xact_start>interval '1 day' or now()-query_start>interval '1 day')
+               (now()-xact_start>interval '1 day' or now()-state_change>interval '1 day')
              };
   } else {
     $sql = qq{ select procpid,sess_id,usename,current_query,query_start,xact_start,backend_start,client_addr
@@ -492,11 +503,11 @@ sub chk_activity {
   info("---Check IDLE in transaction over one day\n");
   info_notimestr("$idle_info\n");
   
-  if ($gpver >= 7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,wait_event_type,wait_event,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
              };
-  } elsif ($gpver == 6) {
+  } elsif ( $gpver eq "gp6" ) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,waiting,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
              };
@@ -596,7 +607,7 @@ sub object_size {
   info_notimestr("$tsfilenuminfo\n\n");
   
   print "---Check Large table top 50\n";
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (3434,3435)
@@ -615,7 +626,7 @@ sub object_size {
   info("---AO Table top 50\n");
   info_notimestr("$aotableinfo\n\n");
   
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam = 2
@@ -634,7 +645,7 @@ sub object_size {
   info("---Heap Table top 50\n");
   info_notimestr("$heaptableinfo\n\n");
   
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select
                pg_partition_root(c.oid)::regclass as root_partition,
                d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
@@ -658,7 +669,7 @@ sub object_size {
   info("---Partition Table Size top 100\n");
   info_notimestr("$parttableinfo\n\n");
 
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (2,3434,3435)
@@ -699,6 +710,13 @@ sub chk_catalog {
   my ($sql,$ret);
   my @tmpstr;
   my $tmp_result;
+  my $GP_SESSION_ROLE_NAME;
+  
+  if ( $gpver =~ /cbdb1/ ) {
+    $GP_SESSION_ROLE_NAME="gp_role";
+  } else {
+    $GP_SESSION_ROLE_NAME="gp_session_role";
+  }
   
   print "---Check pg_catalog\n";
   $sql = qq{select count(*) from pg_tables;};
@@ -730,7 +748,7 @@ sub chk_catalog {
   chomp($pg_namespace_size);
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_namespace')),pg_relation_size('pg_namespace');};
-  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $tmp_result=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace master size error! \n");
@@ -752,7 +770,7 @@ sub chk_catalog {
   
   $sql = qq{create temp table tmp_pg_namespace_record as select * from pg_namespace;
             select pg_relation_size('tmp_pg_namespace_record');};
-  my $pg_namespace_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_namespace_realsize=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_namespace realsize error! \n");
@@ -781,7 +799,7 @@ sub chk_catalog {
   chomp($pg_class_size);
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_class')),pg_relation_size('pg_class');};
-  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $tmp_result=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("pg_class master size error! \n");
@@ -803,7 +821,7 @@ sub chk_catalog {
   
   $sql = qq{create temp table tmp_pg_class_record as select * from pg_class;
             select pg_relation_size('tmp_pg_class_record');};
-  my $pg_class_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_class_realsize=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_class realsize error! \n");
@@ -832,7 +850,7 @@ sub chk_catalog {
   chomp($pg_attribute_size);
   
   $sql = qq{select pg_size_pretty(pg_relation_size('pg_attribute')),pg_relation_size('pg_attribute');};
-  $tmp_result=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
+  $tmp_result=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
     error("pg_attribute master size error! \n");
@@ -852,7 +870,7 @@ sub chk_catalog {
   }
   chomp($pg_attribute_gpseg0);
   
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{create temp table tmp_pg_attribute_record (
                 attrelid      oid      ,
                 attname       name     ,
@@ -887,7 +905,7 @@ sub chk_catalog {
     $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute;
               select pg_relation_size('tmp_pg_attribute_record');};
   }
-  my $pg_attribute_realsize=`env PGOPTIONS='-c gp_session_role=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
+  my $pg_attribute_realsize=`env PGOPTIONS='-c ${GP_SESSION_ROLE_NAME}=utility' psql -A -X -q -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;     ####Use -q :run quietly (no messages, only query output)
   $ret = $? >> 8;
   if ($ret) {
     print("pg_attribute realsize error! \n");
@@ -906,7 +924,7 @@ sub chk_catalog {
   chomp($pg_attribute_count);
   
   my $partition_count;
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{select count(*) from pg_class where relispartition = true;};
   } else { 
     $sql = qq{select count(*) from pg_partition_rule;};
@@ -941,7 +959,7 @@ sub chk_catalog {
   info_notimestr("\n");
   
   ####Query relstorage
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{select a.nspname schemaname,c.amname tabletype,count(*) 
               from pg_namespace a,pg_class b,pg_am c
               where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
@@ -975,7 +993,7 @@ sub chk_catalog {
   info("---Table type info per schema\n");
   info_notimestr("$tabletype\n");  
 
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{select c.amname tabletype, count(*) 
               from pg_namespace a,pg_class b,pg_am c
               where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
@@ -1025,7 +1043,7 @@ sub chk_catalog {
 sub chk_partition_info {
   my ($sql,$ret);
 
-  if ($gpver >= 7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     #####Query subpartition count
     $sql = qq{SELECT tablename,COUNT(*) FROM (
                 SELECT  pg_partition_root(c.oid)::regclass AS tablename,
@@ -1179,7 +1197,7 @@ sub bloatcheck {
     return(-1);
   }
   
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relam=2;};
   } else {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';};
@@ -1392,7 +1410,7 @@ sub def_partition {
   my $resultmsg;
 
   print "---Begin to check default partition, jobs [$concurrency]\n";
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select c.nspname||'.'||b.relname from pg_partitioned_table a,pg_class b,pg_namespace c
                where a.partdefid=b.oid and b.relnamespace=c.oid and b.relkind='r' and a.partdefid>0 and c.nspname in $schema_str; };
   } else {
@@ -1528,7 +1546,7 @@ sub chk_gpdb_param{
   my $param_info;
   my $master_dir;
 
-  if ($gpver >= 7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $master_dir=$ENV{COORDINATOR_DATA_DIRECTORY};
   } else {
     $master_dir=$ENV{MASTER_DATA_DIRECTORY};
@@ -1545,7 +1563,7 @@ sub chk_gpdb_param{
   info("---Check setting in postgresql.conf ...\n");
   info_notimestr("$param_info\n\n");
   
-  if ($gpver >= 6) {
+  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select a.datname,array_to_string(b.setconfig,',') db_setting
     	         from pg_database a,pg_db_role_setting b where a.oid=b.setdatabase and b.setrole=0;
              };
@@ -1561,7 +1579,7 @@ sub chk_gpdb_param{
   info("---Check setting on database ...\n");
   info_notimestr("$param_info\n");
   
-    if ($gpver >= 6) {
+    if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
     $sql = qq{ select a.rolname,array_to_string(b.setconfig,',') role_setting
     	         from pg_roles a,pg_db_role_setting b where a.oid=b.setrole and b.setdatabase=0;
              };
