@@ -7,31 +7,31 @@ Features
 Supports Greenplum 4.3, 5, 6, and 7, with the following checks:
 
 1. Cluster-Level Checks
-		Database status: Detects down nodes.
-		Cluster size: Reports segment count and distribution.
-		Disk space usage: Monitors disk utilization across nodes.
-		Database size: Lists storage usage per database.
-		Age: Checks datfrozenxid to prevent transaction ID wraparound.
+	-	Database status: Detects down nodes.
+	-	Cluster size: Reports segment count and distribution.
+	-	Disk space usage: Monitors disk utilization across nodes.
+	-	Database size: Lists storage usage per database.
+	-	Age: Checks datfrozenxid to prevent transaction ID wraparound.
 
 2. Active Sessions & Transactions
-		Long-running queries: Identifies SQL running for more than 24 hours.
-		Idle in transactions: Detects uncommitted idle in transactions exceeding 24 hours.
+	-	Long-running queries: Identifies SQL running for more than 24 hours.
+	-	Idle in transactions: Detects uncommitted idle in transactions exceeding 24 hours.
 
 3. Database Internal Health Checks
-		System tables: Analyzes key system tables, size, and bloat.
-		Database objects statistics:
-			Schema size
-			Tablespace size
-			Top 50 largest heap tables
-			Top 50 largest AO tables
-			Top 100 largest partitioned tables
-		Skew detection: Measures data distribution imbalance across segments.
-		Bloat detection: Identifies excessive bloat in AO tables.
-		Default subpartition check: Ensures proper partition design.
+	-	System tables: Analyzes key system tables, size, and bloat.
+	-	Database objects statistics:
+		-	Schema size
+		-	Tablespace size
+		-	Top 50 largest heap tables
+		-	Top 50 largest AO tables
+		-	Top 100 largest partitioned tables
+	-	Skew detection: Measures data distribution imbalance across segments.
+	-	Bloat detection: Identifies excessive bloat in AO tables.
+	-	Default subpartition check: Ensures proper partition design.
 
 
 -------------------------
-Installation
+Installation:
 
 1. Verify plpythonu is created
 SELECT * FROM pg_language WHERE lanname = 'plpythonu';
@@ -58,7 +58,8 @@ psql dbname -af ./gpsize/load_files_size_cbdb.sql  # CloudBerryDB
 
 
 -------------------------
-Usage
+Usage:
+
 1. Check one database
 perl gp_healthcheck.pl --dbname testdb --jobs 3
 
