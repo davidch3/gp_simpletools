@@ -900,7 +900,7 @@ sub chk_catalog {
               insert into tmp_pg_attribute_record
               select attrelid,attname,atttypid,attstattarget,attlen,attnum,attndims,attcacheoff,atttypmod,attbyval,attstorage,attalign,attnotnull,atthasdef,
               atthasmissing,attidentity,attgenerated,attisdropped,attislocal,attinhcount,attcollation,attacl,attoptions,attfdwoptions from pg_attribute;
-              select pg_size_pretty(pg_relation_size('tmp_pg_attribute_record'));};
+              select pg_relation_size('tmp_pg_attribute_record');};
   } else {
     $sql = qq{create temp table tmp_pg_attribute_record as select * from pg_attribute;
               select pg_relation_size('tmp_pg_attribute_record');};
