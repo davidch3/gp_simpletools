@@ -25,6 +25,9 @@ create table public.gp_seg_table_size
 ) distributed randomly;
 
 
+CREATE LANGUAGE plpython3u;
+
+
 DROP FUNCTION IF EXISTS public.hostname();
 CREATE or replace FUNCTION public.hostname() RETURNS
 text
