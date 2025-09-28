@@ -69,11 +69,15 @@ perl gp_healthcheck.pl --dbname testdb --include-schema public --include-schema 
 3. Check All Databases in GP cluster
 perl gp_healthcheck.pl --alldb --jobs 3
 
-4. Custom Log Directory
-perl gp_healthcheck.pl --alldb --log-dir /path/to/logs
+4. Check All Databases in GP cluster, and auto create UDF if it is not exists in DB.
+perl gp_healthcheck.pl --alldb --jobs 3 --create-udf /home/gpadmin/gpshell
 
-5. Help
+5. Custom Log Directory
+perl gp_healthcheck.pl --alldb --log-dir /tmp/logs
+
+6. Help
 perl gp_healthcheck.pl --help
+perl gp_healthcheck.pl -?
 
 
 -------------------------
@@ -110,6 +114,12 @@ Options:
   
   --include-schema-file <schema_filename>
     A file containing a list of schema to be included in healthcheck.
+  
+  --skip-without-udf
+    If skew,bloat,dbsize functions is not created in DB, then skip these checking. Default is false.
+  
+  --create-udf <udf_directory>
+    If skew,bloat,dbsize functions is not created in DB, automatic create them. UDF directory must be specified.
   
 
 

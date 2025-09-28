@@ -7,7 +7,7 @@ use FindBin qw($Bin $Script);
 
 my $cmd_name=$Script;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","","gpadmin","gpadmin");    ###default
-my ($IS_HELP,$IS_ALLSCHEMA,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$IS_ALLDB);
+my ($IS_HELP,$IS_ALLSCHEMA,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$IS_ALLDB,$IS_SKIPUDF,$FUNC_DIR);
 my $fh_log;
 my @schema_list;
 my $schema_str;
@@ -52,12 +52,22 @@ Options:
   --include-schema-file <schema_filename>
     A file containing a list of schema to be included in healthcheck.
   
+  --skip-without-udf
+    If skew,bloat,dbsize functions is not created in DB, then skip these checking. Default is false.
+  
+  --create-udf <udf_directory>
+    If skew,bloat,dbsize functions is not created in DB, automatic create them. UDF directory must be specified.
+  
 Examples:
   perl $cmd_name --dbname testdb --jobs 3
   
   perl $cmd_name --dbname testdb --include-schema public --include-schema gpp_sync --jobs 3
   
   perl $cmd_name --alldb --jobs 3
+  
+  perl $cmd_name --alldb --jobs 3 --skip-without-udf
+  
+  perl $cmd_name --alldb --jobs 3 --create-udf /home/gpadmin/gpshell
   
   perl $cmd_name --help
   
@@ -74,6 +84,7 @@ sub getOption{
   $LOG_DIR = "~/gpAdminLogs";
   $IS_ALLSCHEMA = 0;
   $SCHEMA_FILE = "";
+  $FUNC_DIR = "";
   
   GetOptions(
       'hostname|h:s'          => \$hostname,
@@ -87,6 +98,8 @@ sub getOption{
       'include-schema-file:s' => \$SCHEMA_FILE,
       'jobs:s'                => \$concurrency,
       'log-dir:s'             => \$LOG_DIR,
+      'skip-without-udf!'     => \$IS_SKIPUDF,
+      'create-udf:s'          => \$FUNC_DIR,
   );
   if(@ARGV != 0){
     print "Input error: [@ARGV]\nPlease show help: perl $cmd_name --help\n";
@@ -120,8 +133,14 @@ sub getOption{
     print "Input error: The following options may not be specified together: include-schema, include-schema-file\n";
     exit 0;
   }
+  
   if ( $concurrency=="" || $concurrency<=0 ) {
     print "Input error: --jobs <parallel_job_number>\n  The number of parallel jobs to healthcheck, include: skew, bloat, default partition. Default value: 2\n";
+    exit 0;
+  }
+  
+  if ( $IS_SKIPUDF && length($FUNC_DIR)>0 ) {
+    print "Input error: The following options may not be specified together: skip-udf, auto-create-udf\n";
     exit 0;
   }
   
@@ -229,7 +248,7 @@ sub get_gpver {
     @tmpver = split /\./,$tmpstr[4];
     $sresult = "gp".$tmpver[0];
     print $sresult."\n";
-  } elsif ( $sver =~ /Cloudberry Database/ ) {
+  } elsif ( $sver =~ /Cloudberry Database/ || $sver =~ /Apache Cloudberry/ ) {
     @tmpstr = split / /,$sver;
     print $tmpstr[4]."\n";
     info_notimestr("CBDB Version: $tmpstr[4]\n");
@@ -342,6 +361,79 @@ sub get_schema{
   info_notimestr("SCHEMA: $schema_str\n");
   
 }
+
+
+sub check_udf{
+  my ($sql,$ret);
+  my $func_cnt;
+  
+  print "---Check healthcheck UDF in DB: $database\n";
+  info("---Check healthcheck UDF in DB: $database\n");
+  
+  $sql = qq{ select count(*) from pg_proc where proname in ('skewcheck_func','aotable_bloatcheck','load_files_size'); };
+  $func_cnt = `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database`;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query healthcheck udf error\n");
+    exit(1);
+  }
+  chomp($func_cnt);
+  if ($func_cnt >= 3) {
+    return 1;   ### UDF is created
+  } else {
+    info("UDF was not created in DB: $database\n");
+    return 0;   ### UDF is not created
+  }
+}
+
+
+sub create_udf{
+  my ($ret1,$ret2,$ret3);
+  
+  if (length($FUNC_DIR)==0) {
+    error("Please specified the directory of UDF scripts!\n");
+    exit(1);
+  }
+
+  print "---Create healthcheck UDF in DB: $database\n";
+  info("---Create healthcheck UDF in DB: $database\n");
+
+  if ( $gpver =~ /cbdb/ ) {
+    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    $ret1 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_cbdb.sql -h $hostname -p $port -U $username -d $database`;
+    $ret2 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    $ret3 = $? >> 8;
+  } elsif ( $gpver =~ /gp7/ ) {
+    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    $ret1 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_v7.sql -h $hostname -p $port -U $username -d $database`;
+    $ret2 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    $ret3 = $? >> 8;
+  } elsif ( $gpver =~ /gp6/ ) {
+    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
+    $ret1 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_v6.sql -h $hostname -p $port -U $username -d $database`;
+    $ret2 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp6.sql -h $hostname -p $port -U $username -d $database`;
+    $ret3 = $? >> 8;
+  } else {  ###gp4.3 gp5
+    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
+    $ret1 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size.sql -h $hostname -p $port -U $username -d $database`;
+    $ret2 = $? >> 8;
+    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func.sql -h $hostname -p $port -U $username -d $database`;
+    $ret3 = $? >> 8;
+  }
+  if ( $ret1 || $ret2 || $ret3 ) {
+  	###If some error in sqlfile, will be skipped.
+    error("Create healthcheck UDF error!\n");
+    exit(1);
+  }
+}
+
 
 
 sub Gpstate {
@@ -475,7 +567,17 @@ sub chk_age {
   info_notimestr("$master_age\n");
   info("---Segment instance\n");
   info_notimestr("$seg_age\n");
-  
+
+  print "---Check global xid\n";
+  $sql = qq{ begin;select gp_distributed_xid(); };
+  my $chk_gxid=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
+  $ret = $? >> 8;
+  if ($ret) {
+    error("Query global xid error! \n");
+    return(-1);
+  }
+  info("---Global xid\n");
+  info_notimestr("$chk_gxid\n");
 }
 
 
@@ -483,7 +585,7 @@ sub chk_activity {
   my ($sql,$ret);
   
   print "---Check pg_stat_activity\n";
-  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select pid,sess_id,usename,query,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='idle in transaction' and 
                (now()-xact_start>interval '1 day' or now()-state_change>interval '1 day')
@@ -503,7 +605,7 @@ sub chk_activity {
   info("---Check IDLE in transaction over one day\n");
   info_notimestr("$idle_info\n");
   
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select pid,sess_id,usename,substr(query,1,100) query,wait_event_type,wait_event,query_start,xact_start,backend_start,client_addr
                from pg_stat_activity where state='active' and now()-query_start>interval '1 day'
              };
@@ -607,7 +709,7 @@ sub object_size {
   info_notimestr("$tsfilenuminfo\n\n");
   
   print "---Check Large table top 50\n";
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (3434,3435)
@@ -626,7 +728,7 @@ sub object_size {
   info("---AO Table top 50\n");
   info_notimestr("$aotableinfo\n\n");
   
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam = 2
@@ -645,7 +747,7 @@ sub object_size {
   info("---Heap Table top 50\n");
   info_notimestr("$heaptableinfo\n\n");
   
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select
                pg_partition_root(c.oid)::regclass as root_partition,
                d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
@@ -669,7 +771,7 @@ sub object_size {
   info("---Partition Table Size top 100\n");
   info_notimestr("$parttableinfo\n\n");
 
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select b.nspname||'.'||a.relname as tablename, d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
                from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
                where a.relnamespace=b.oid and a.oid=c.oid and c.relam=d.oid and c.relam in (2,3434,3435)
@@ -712,7 +814,7 @@ sub chk_catalog {
   my $tmp_result;
   my $GP_SESSION_ROLE_NAME;
   
-  if ( $gpver =~ /cbdb1/ ) {
+  if ( $gpver =~ /cbdb/ ) {
     $GP_SESSION_ROLE_NAME="gp_role";
   } else {
     $GP_SESSION_ROLE_NAME="gp_session_role";
@@ -870,7 +972,7 @@ sub chk_catalog {
   }
   chomp($pg_attribute_gpseg0);
   
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{create temp table tmp_pg_attribute_record (
                 attrelid      oid      ,
                 attname       name     ,
@@ -924,7 +1026,7 @@ sub chk_catalog {
   chomp($pg_attribute_count);
   
   my $partition_count;
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{select count(*) from pg_class where relispartition = true;};
   } else { 
     $sql = qq{select count(*) from pg_partition_rule;};
@@ -959,7 +1061,7 @@ sub chk_catalog {
   info_notimestr("\n");
   
   ####Query relstorage
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{select a.nspname schemaname,c.amname tabletype,count(*) 
               from pg_namespace a,pg_class b,pg_am c
               where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
@@ -993,7 +1095,7 @@ sub chk_catalog {
   info("---Table type info per schema\n");
   info_notimestr("$tabletype\n");  
 
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{select c.amname tabletype, count(*) 
               from pg_namespace a,pg_class b,pg_am c
               where a.oid=b.relnamespace and b.relam=c.oid and relkind in ('r','p') and a.nspname not like 'pg%' and a.nspname not like 'gp%'
@@ -1043,7 +1145,7 @@ sub chk_catalog {
 sub chk_partition_info {
   my ($sql,$ret);
 
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     #####Query subpartition count
     $sql = qq{SELECT tablename,COUNT(*) FROM (
                 SELECT  pg_partition_root(c.oid)::regclass AS tablename,
@@ -1197,7 +1299,7 @@ sub bloatcheck {
     return(-1);
   }
   
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relam=2;};
   } else {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';};
@@ -1410,7 +1512,7 @@ sub def_partition {
   my $resultmsg;
 
   print "---Begin to check default partition, jobs [$concurrency]\n";
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select c.nspname||'.'||b.relname from pg_partitioned_table a,pg_class b,pg_namespace c
                where a.partdefid=b.oid and b.relnamespace=c.oid and b.relkind='r' and a.partdefid>0 and c.nspname in $schema_str; };
   } else {
@@ -1546,7 +1648,7 @@ sub chk_gpdb_param{
   my $param_info;
   my $master_dir;
 
-  if ( $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $master_dir=$ENV{COORDINATOR_DATA_DIRECTORY};
   } else {
     $master_dir=$ENV{MASTER_DATA_DIRECTORY};
@@ -1563,7 +1665,7 @@ sub chk_gpdb_param{
   info("---Check setting in postgresql.conf ...\n");
   info_notimestr("$param_info\n\n");
   
-  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+  if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select a.datname,array_to_string(b.setconfig,',') db_setting
     	         from pg_database a,pg_db_role_setting b where a.oid=b.setdatabase and b.setrole=0;
              };
@@ -1579,7 +1681,7 @@ sub chk_gpdb_param{
   info("---Check setting on database ...\n");
   info_notimestr("$param_info\n");
   
-    if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb1/ ) {
+    if ( $gpver eq "gp6" || $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $sql = qq{ select a.rolname,array_to_string(b.setconfig,',') role_setting
     	         from pg_roles a,pg_db_role_setting b where a.oid=b.setrole and b.setdatabase=0;
              };
@@ -1603,6 +1705,7 @@ sub chk_gpdb_param{
 sub main{
   my $ret;
   my $i;
+  my $has_udf;
   
   getOption();
   set_env();
@@ -1631,12 +1734,21 @@ sub main{
     info("------Begin to check database: $database\n");
     info("-----------------------------------------------------\n");
     get_schema();
-    chk_catalog();
-    object_size();
-    chk_partition_info();
-    skewcheck();
-    bloatcheck();
-    def_partition();
+    $has_udf = check_udf();
+    if ( !$has_udf && length($FUNC_DIR)>0 ) { create_udf(); }
+    if ( $IS_SKIPUDF && !$has_udf ) {
+      ###If udf is not created, skip object size calc, skewcheck, bloatcheck.
+      chk_catalog();
+      chk_partition_info();
+      def_partition();  
+    } else {
+      chk_catalog();
+      object_size();
+      chk_partition_info();
+      skewcheck();
+      bloatcheck();
+      def_partition();  
+    }
   }
 
   info("-----------------------------------------------------\n");
