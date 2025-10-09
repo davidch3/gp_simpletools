@@ -81,10 +81,12 @@ sub getOption{
   }
   
   $concurrency = 2;
-  $LOG_DIR = "~/gpAdminLogs";
   $IS_ALLSCHEMA = 0;
   $SCHEMA_FILE = "";
   $FUNC_DIR = "";
+
+  my $home_dir=$ENV{"HOME"};
+  $LOG_DIR = "$home_dir/gpAdminLogs"; 
   
   GetOptions(
       'hostname|h:s'          => \$hostname,
@@ -110,6 +112,7 @@ sub getOption{
     exit 0;
   }
 
+  print "LOG Directory: $LOG_DIR\n";
   
   if ( $IS_ALLDB && length($database)>0 ) {
     print "Input error: The following options may not be specified together: --alldb, --dbname <database_name>\n";
@@ -1492,14 +1495,14 @@ sub bloatcheck {
   my $logday=getCurrentDate();
   if ( $bloatcount>0 ) {
     $sql = qq{ copy (select 'alter table '||tablename||' set with (reorganize=true); analyze '||tablename||';' from bloat_skew_result) 
-    	         to '/tmp/fix_ao_table_script_${database}_$logday.sql'; };
+    	         to '$LOG_DIR/fix_ao_table_script_${database}_$logday.sql'; };
     `psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
     $ret = $? >> 8;
     if ($ret) {
       error("Unload bloat table fix script error! \n");
       return(-1);
     }
-    info_notimestr("\nPlease check fix script: /tmp/fix_ao_table_script_${database}_$logday.sql\n");
+    info_notimestr("\nPlease check fix script: $LOG_DIR/fix_ao_table_script_${database}_$logday.sql\n");
   }
     
 }
