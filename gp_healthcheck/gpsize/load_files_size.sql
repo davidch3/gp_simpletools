@@ -86,7 +86,7 @@ if p.returncode != 0:
 copy_sql = "copy public.gp_seg_size_ora from '"+filename+"' delimiter '|';"
 run_psql_utility(copy_sql)
 
-insert_sql = "insert into public.gp_seg_table_size (select hostname(),a.oid,a.relnamespace,a.relname,a.reltablespace,a.relfilenode,b.size,b.relfilecount,b.max_modtime from pg_class a join (select split_part(filename,'.',1) as relfilenode,sum(size) size,count(*) relfilecount,max(modtime) max_modtime from gp_seg_size_ora group by 1) b on a.relfilenode::text=b.relfilenode);"
+insert_sql = "set gp_enable_relsize_collection=off; insert into public.gp_seg_table_size (select hostname(),a.oid,a.relnamespace,a.relname,a.reltablespace,a.relfilenode,b.size,b.relfilecount,b.max_modtime from pg_class a join (select split_part(filename,'.',1) as relfilenode,sum(size) size,count(*) relfilecount,max(modtime) max_modtime from gp_seg_size_ora group by 1) b on a.relfilenode::text=b.relfilenode);"
 run_psql_utility(insert_sql)
 
 return "OK"
@@ -95,6 +95,7 @@ $$ LANGUAGE plpythonu;
 
 --truncate gp_seg_size_ora;
 --truncate gp_seg_table_size;
+--set gp_enable_relsize_collection=off; 
 --select gp_segment_id,public.load_files_size() from gp_dist_random('gp_id');
 
 
