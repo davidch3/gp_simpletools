@@ -253,24 +253,36 @@ sub set_env
   return 0;
 }
 
+
 sub get_gpver {
   my @tmpstr;
   my @tmpver;
   my $sql = qq{select version();};
   my $sver=`psql -A -X -t -c "$sql" -d postgres` ;
   my $ret=$?;
+  my $sresult;
   if($ret) { 
     print "Get GP version error!\n";
     exit 1;
   }
   chomp($sver);
-  @tmpstr = split / /,$sver;
-  print $tmpstr[4]."\n";
-  info_notimestr("GP Version: $tmpstr[4]\n");
-  @tmpver = split /\./,$tmpstr[4];
-  print $tmpver[0]."\n";
   
-  return $tmpver[0];
+  if ( $sver =~ /Greenplum Database/ ) {
+    @tmpstr = split / /,$sver;
+    print $tmpstr[4]."\n";
+    info_notimestr("GP Version: $tmpstr[4]\n");
+    @tmpver = split /\./,$tmpstr[4];
+    $sresult = "gp".$tmpver[0];
+    print $sresult."\n";
+  } elsif ( $sver =~ /Cloudberry Database/ || $sver =~ /Apache Cloudberry/ ) {
+    @tmpstr = split / /,$sver;
+    print $tmpstr[4]."\n";
+    info_notimestr("CBDB Version: $tmpstr[4]\n");
+    $sresult = "cbdb".$tmpstr[4];
+    print $sresult."\n";
+  }
+  
+  return $sresult;
 }
 
 
@@ -430,7 +442,7 @@ sub bloatcheck {
     return(-1);
   }
   
-  if ($gpver>=7) {
+  if ( $gpver eq "gp7" || $gpver =~ /cbdb/ ) {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relam=2;};
   } else {
     $pg_class_sql = qq{insert into pg_class_bloat_chk select * from pg_class where relkind='r' and relstorage='h';};
