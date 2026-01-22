@@ -132,4 +132,8 @@ Examples:
   perl gp_reclaim_space.pl --help
 
 
+Deploy on crontab:
+00 19 * * * source /home/gpadmin/.bashrc; cd /home/gpadmin/gpshell/; perl gp_reclaim_space.pl -d etl -u gpadmin --all --jobs 3 --duration 2 > /home/gpadmin/gpAdminLogs/gp_reclaim_space_$(date +\%Y\%m\%d).log 2>&1
+
+
 
