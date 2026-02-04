@@ -7,7 +7,7 @@ use FindBin qw($Bin $Script);
 
 my $cmd_name=$Script;
 my ($hostname,$port,$database,$username,$password)=("localhost","5432","","gpadmin","gpadmin");    ###default
-my ($IS_HELP,$IS_ALLSCHEMA,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$IS_ALLDB,$IS_SKIPUDF,$FUNC_DIR);
+my ($IS_HELP,$IS_ALLSCHEMA,@CHK_SCHEMA,$SCHEMA_FILE,$concurrency,$LOG_DIR,$IS_ALLDB,$IS_SKIPUDF,$FUNC_DIR,$UP_FUNC_DIR);
 my $fh_log;
 my @schema_list;
 my $schema_str;
@@ -57,6 +57,9 @@ Options:
   
   --create-udf <udf_directory>
     If skew,bloat,dbsize functions is not created in DB, automatic create them. UDF directory must be specified.
+
+  --upgrade-udf <udf_directory>
+    Even if skew,bloat,dbsize functions is created in DB, automatic create or replace them. UDF directory must be specified.
   
 Examples:
   perl $cmd_name --dbname testdb --jobs 3
@@ -68,6 +71,8 @@ Examples:
   perl $cmd_name --alldb --jobs 3 --skip-without-udf
   
   perl $cmd_name --alldb --jobs 3 --create-udf /home/gpadmin/gpshell
+  
+  perl $cmd_name --alldb --jobs 3 --upgrade-udf /home/gpadmin/gpshell
   
   perl $cmd_name --help
   
@@ -102,6 +107,7 @@ sub getOption{
       'log-dir:s'             => \$LOG_DIR,
       'skip-without-udf!'     => \$IS_SKIPUDF,
       'create-udf:s'          => \$FUNC_DIR,
+      'upgrade-udf:s'         => \$UP_FUNC_DIR,
   );
   if(@ARGV != 0){
     print "Input error: [@ARGV]\nPlease show help: perl $cmd_name --help\n";
@@ -142,8 +148,12 @@ sub getOption{
     exit 0;
   }
   
-  if ( $IS_SKIPUDF && length($FUNC_DIR)>0 ) {
-    print "Input error: The following options may not be specified together: skip-udf, auto-create-udf\n";
+  $itmp=0;
+  if ($IS_SKIPUDF) { $itmp++; }
+  if (length($FUNC_DIR)>0) { $itmp++; }
+  if (length($UP_FUNC_DIR)>0) { $itmp++; }
+  if ( $itmp>1 ) {
+    print "Input error: The following options may be specified once: skip-udf, create-udf, upgrade-udf\n";
     exit 0;
   }
   
@@ -391,43 +401,44 @@ sub check_udf{
 
 
 sub create_udf{
+	my ($myfuncdir)=@_;
   my ($ret1,$ret2,$ret3);
   
-  if (length($FUNC_DIR)==0) {
+  if (length($myfuncdir)==0) {
     error("Please specified the directory of UDF scripts!\n");
     exit(1);
   }
 
-  print "---Create healthcheck UDF in DB: $database\n";
-  info("---Create healthcheck UDF in DB: $database\n");
+  print "---Create or replace healthcheck UDF in DB: $database\n";
+  info("---Create or replace healthcheck UDF in DB: $database\n");
 
   if ( $gpver =~ /cbdb/ ) {
-    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
     $ret1 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_cbdb.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/gpsize/load_files_size_cbdb.sql -h $hostname -p $port -U $username -d $database`;
     $ret2 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
     $ret3 = $? >> 8;
   } elsif ( $gpver =~ /gp7/ ) {
-    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/aobloat/check_ao_bloat_gp7.sql -h $hostname -p $port -U $username -d $database`;
     $ret1 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_v7.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/gpsize/load_files_size_v7.sql -h $hostname -p $port -U $username -d $database`;
     $ret2 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/skew/skewcheck_func_gp7.sql -h $hostname -p $port -U $username -d $database`;
     $ret3 = $? >> 8;
   } elsif ( $gpver =~ /gp6/ ) {
-    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
     $ret1 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size_v6.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/gpsize/load_files_size_v6.sql -h $hostname -p $port -U $username -d $database`;
     $ret2 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func_gp6.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/skew/skewcheck_func_gp6.sql -h $hostname -p $port -U $username -d $database`;
     $ret3 = $? >> 8;
   } else {  ###gp4.3 gp5
-    `psql -A -X -t -f $FUNC_DIR/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/aobloat/check_ao_bloat.sql -h $hostname -p $port -U $username -d $database`;
     $ret1 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/gpsize/load_files_size.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/gpsize/load_files_size.sql -h $hostname -p $port -U $username -d $database`;
     $ret2 = $? >> 8;
-    `psql -A -X -t -f $FUNC_DIR/skew/skewcheck_func.sql -h $hostname -p $port -U $username -d $database`;
+    `psql -A -X -t -f $myfuncdir/skew/skewcheck_func.sql -h $hostname -p $port -U $username -d $database`;
     $ret3 = $? >> 8;
   }
   if ( $ret1 || $ret2 || $ret3 ) {
@@ -796,9 +807,10 @@ sub object_size {
   info("---Temp Table Size top 50\n");
   info_notimestr("$temptableinfo\n\n");
 
-  $sql = qq{ select schemaname||'.'||tablename tablename,pg_size_pretty(pg_relation_size(schemaname||'.'||tablename)) table_size,
-             schemaname||'.'||indexname indexname,pg_size_pretty(pg_relation_size(schemaname||'.'||indexname)) index_size
-             from pg_indexes order by pg_relation_size(schemaname||'.'||indexname) desc limit 50;};
+  $sql = qq{ select 
+             E'\\"'||schemaname||E'\\".\\"'||tablename||E'\\"' tablename,pg_size_pretty(pg_relation_size(E'\\"'||schemaname||E'\\".\\"'||tablename||E'\\"')) table_size,
+             E'\\"'||schemaname||E'\\".\\"'||indexname||E'\\"' indexname,pg_size_pretty(pg_relation_size(E'\\"'||schemaname||E'\\".\\"'||indexname||E'\\"')) index_size
+             from pg_indexes order by pg_relation_size(E'\\"'||schemaname||E'\\".\\"'||indexname||E'\\"') desc limit 50;};
   my $indexinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d $database` ;
   $ret = $? >> 8;
   if ($ret) {
@@ -1738,7 +1750,11 @@ sub main{
     info("-----------------------------------------------------\n");
     get_schema();
     $has_udf = check_udf();
-    if ( !$has_udf && length($FUNC_DIR)>0 ) { create_udf(); }
+    if ( length($UP_FUNC_DIR)>0 ) {
+      create_udf($UP_FUNC_DIR); 
+    } elsif ( !$has_udf && length($FUNC_DIR)>0 ) { 
+      create_udf($FUNC_DIR);
+    }
     if ( $IS_SKIPUDF && !$has_udf ) {
       ###If udf is not created, skip object size calc, skewcheck, bloatcheck.
       chk_catalog();
