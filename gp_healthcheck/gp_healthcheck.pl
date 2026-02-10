@@ -544,7 +544,8 @@ sub db_size {
   
   print "---Check database size\n";
   $sql = qq{ select datname,pg_size_pretty(pg_database_size(oid)) from pg_database
-  	         where datname not in ('postgres','template1','template0');};
+  	         where datname not in ('postgres','template1','template0')
+  	         order by pg_database_size(oid) desc;};
   my $dbsizeinfo=`psql -A -X -t -c "$sql" -h $hostname -p $port -U $username -d postgres` ;
   $ret = $? >> 8;
   if ($ret) {
