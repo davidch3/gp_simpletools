@@ -14,6 +14,6 @@ BEGIN
   return i_size;
 END;
 $$
-LANGUAGE plpgsql volatile;
+LANGUAGE plpgsql strict volatile;
 
 
