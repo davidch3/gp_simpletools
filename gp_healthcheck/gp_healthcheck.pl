@@ -766,7 +766,7 @@ sub object_size {
     $sql = qq{ select
                pg_partition_root(c.oid)::regclass as root_partition,
                d.amname, pg_size_pretty(sum(a.size)::bigint) as table_size
-               from gp_seg_table_size a,pg_namespace b,pg_class c,pg_am d
+               from gp_seg_table_size a,pg_class c,pg_am d
                where a.oid=c.oid and c.relam=d.oid and c.relam in (2,3434,3435) and c.relispartition=true
                group by 1,2 order by sum(a.size) desc limit 100;};
   } else { 
